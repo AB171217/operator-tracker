@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Operator Tracker — KKH Pumped Storage</title>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAAQ8z2juAPIbg1hS3_SnMjl8NrEr0MMIU",
+    authDomain: "operator-tracker.firebaseapp.com",
+    projectId: "operator-tracker",
+    databaseURL: "https://operator-tracker-default-rtdb.europe-west1.firebasedatabase.app",
+    storageBucket: "operator-tracker.firebasestorage.app",
+    messagingSenderId: "926321195085",
+    appId: "1:926321195085:web:e79dec6d3c16af4fc60404"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const ADMIN_NAME = "Ali Bzadug";
+  const ADMIN_PASS = "AB17pro$";
+  const USER_PASS  = "AB17$";
+
+  const FLOORS = {
+    TUN: [{id:'ENT', name:'Main Access Tunnel', desc:'Entry point — MAT', cls:'tun', icon:'tunnel'}],
+    TFH: [
+      {id:'2', name:'TFH 2', desc:'Upper', cls:'tfh', icon:'transformer'},
+      {id:'1', name:'TFH 1', desc:'Lower', cls:'tfh', icon:'transformer'}
+    ],
+    MH: [
+      {id:'OP',  name:'Operation Floor', desc:'Control room', cls:'mh', icon:'control'},
+      {id:'GEN', name:'Generator Floor', desc:'Generator 1 — Generator 2', cls:'mh', icon:'generator'},
+      {id:'TUR', name:'Turbine Floor',   desc:'Pump-turbine units', cls:'mh', icon:'turbine'},
+      {id:'MIV', name:'MIV Floor',       desc:'Main Inlet Valve', cls:'mh', icon:'valve'},
+      {id:'PIT', name:'PIT',             desc:'Lowest level', cls:'mh', icon:'pit'}
+    ],
+    APH: [
+      {id:'5', name:'APH 5', desc:'Upper', cls:'aph', icon:'aux'},
+      {id:'4', name:'APH 4', desc:'', cls:'aph', icon:'aux'},
+      {id:'3', name:'APH 3', desc:'', cls:'aph', icon:'aux'},
+      {id:'2', name:'APH 2', desc:'', cls:'aph', icon:'aux'},
+      {id:'1', name:'APH 1', desc:'Lower', cls:'aph', icon:'aux'}
+    ]
+  };
+  const BLDS = [
+    {key:'TUN', label:'MAT Tunnel',        badge:'MAT', bc:'bb-tun'},
+    {key:'TFH', label:'Transformer Hall',  badge:'TFH', bc:'bb-tfh'},
+    {key:'MH',  label:'Machine Hall',      badge:'MH',  bc:'bb-mh'},
+    {key:'APH', label:'Auxiliaries P.H.',  badge:'APH', bc:'bb-aph'}
+  ];
+  const ELEV_H   = {TUN:[58], TFH:[58,40], MH:[70,58,48,38,28], APH:[70,58,48,38,28]};
+  const ELEV_COLS = [
+    {key:'TUN',label:'MAT',cls:'tun'},
+    {key:'TFH',label:'TFH',cls:'tfh'},
+    {key:'MH', label:'Machine Hall',cls:'mh'},
+    {key:'APH',label:'APH',cls:'aph'}
+  ];
+
+  const ICONS = {
+    tunnel:      '<path d="M3 20 Q3 8 12 6 Q21 8 21 20"/><path d="M7 20v-6a5 5 0 0 1 10 0v6"/><line x1="3" y1="20" x2="21" y2="20"/>',
+    transformer: '<rect x="4" y="5" width="6" height="14" rx="1"/><rect x="14" y="5" width="6" height="14" rx="1"/><path d="M10 9h4M10 12h4M10 15h4"/>',
+    control:     '<rect x="3" y="4" width="18" height="12" rx="2"/><circle cx="8" cy="10" r="2"/><circle cx="14" cy="10" r="1.2"/><path d="M18 8v4M3 18h18"/>',
+    generator:   '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M5.64 5.64l2.12 2.12M16.24 16.24l2.12 2.12M5.64 18.36l2.12-2.12M16.24 7.76l2.12-2.12"/>',
+    turbine:     '<circle cx="12" cy="12" r="3"/><path d="M12 9 C14 6 18 5 18 9 C18 11 15 11 12 12"/><path d="M12 15 C10 18 6 19 6 15 C6 13 9 13 12 12"/>',
+    valve:       '<circle cx="12" cy="12" r="4"/><line x1="2" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="22" y2="12"/><line x1="12" y1="6" x2="12" y2="4"/><path d="M10 10 L14 14 M14 10 L10 14"/>',
+    pit:         '<path d="M4 6 L12 18 L20 6"/><path d="M8 6 L12 12 L16 6"/><line x1="4" y1="6" x2="20" y2="6"/>',
+    aux:         '<rect x="3" y="9" width="18" height="11" rx="1"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/><circle cx="12" cy="14" r="2"/>'
+  };
+
+  let state = {
+    user: null, admin: false,
+    floor: null,
+    sos: false,
+    log: [], dlog: [],
+    pending: null,
+    viewers: [],
+    operatorData: null
+  };
+
+  function pad(n){return String(n).padStart(2,'0');}
+  function now(){var d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
+  function ini(n){return n.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,3);}
+
+  function addLog(html){
+    state.log.unshift({t:now(),h:html});
+    if(state.log.length>60) state.log.pop();
+    renderLog();
+  }
+  function renderLog(){
+    const b=document.getElementById('logBody');
+    if(!b) return;
+    if(state.log.length===0){b.innerHTML='';return;}
+    b.innerHTML=state.log.map(e=>`<div class="log-row"><div class="log-t">${e.t}</div><div class="log-x">${e.h}</div></div>`).join('');
+  }
+
+  function setGas(wid,vid,sid,val,st,cls){
+    const w=document.getElementById(wid);
+    if(!w) return;
+    w.className='gi'+(cls?' '+cls:'');
+    document.getElementById(vid).textContent=val;
+    document.getElementById(sid).textContent=st;
+  }
+
+  function updateHero(){
+    const fe=document.getElementById('heroFloor');
+    const be=document.getElementById('heroBld');
+    if(!fe) return;
+    if(!state.floor){
+      fe.textContent='No location detected — awaiting device data';
+      fe.className='hero-floor none';
+      be.style.display='none';
+    } else {
+      fe.textContent=state.floor.floorName;
+      fe.className='hero-floor';
+      be.textContent=state.floor.bldName;
+      be.style.display='block';
+    }
+  }
+
+  function renderBuildings(){
+    let html='';
+    for(const bld of BLDS){
+      const floors=FLOORS[bld.key];
+      html+=`<div class="bld"><div class="bh"><div class="bn">${bld.label}</div><div class="bb ${bld.bc}">${bld.badge}</div></div>`;
+      for(const f of floors){
+        const sel=(state.floor&&state.floor.bld===bld.key&&state.floor.fid===f.id);
+        const sc=sel?(' sel-'+f.cls):'';
+        html+=`<div class="fl-row${sc}" data-bld="${bld.key}" data-fid="${f.id}" data-bname="${bld.label}" data-fname="${f.name}" data-cls="${f.cls}">
+          <div class="fl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[f.icon]}</svg></div>
+          <div style="flex:1;min-width:0"><div class="fl-name">${f.name}</div>${f.desc?`<div class="fl-desc">${f.desc}</div>`:''}</div>
+          ${sel?'<div class="wdot"></div>':''}
+        </div>`;
+      }
+      html+='</div>';
+    }
+    const bldgs=document.getElementById('bldgs');
+    if(!bldgs) return;
+    bldgs.innerHTML=html;
+    bldgs.querySelectorAll('.fl-row').forEach(el=>{
+      el.addEventListener('click', onFloorClick);
+    });
+  }
+
+  function onFloorClick(e){
+    const el=e.currentTarget;
+    const bld=el.dataset.bld, fid=el.dataset.fid, bname=el.dataset.bname, fname=el.dataset.fname, cls=el.dataset.cls;
+    state.floor={bld, fid, bldName:bname, floorName:fname, cls};
+    updateHero();
+    renderBuildings();
+    renderElev();
+    const devLoc=document.getElementById('devLoc');
+    if(devLoc) devLoc.textContent=fname+' / '+bname;
+    addLog(`<b>Operator location updated:</b> ${bname} — <b>${fname}</b>`);
+    document.getElementById('tsDisp').textContent=now();
+    set(ref(db,'operator/location'), {bld, fid, bldName:bname, floorName:fname, cls, updatedAt:now()});
+    set(ref(db,'operator/lastSeen'), now());
+  }
+
+  function renderElev(){
+    let html='';
+    for(const col of ELEV_COLS){
+      const floors=FLOORS[col.key];
+      const heights=ELEV_H[col.key];
+      html+=`<div class="ecol"><div class="ecol-title">${col.label}</div>`;
+      floors.forEach((f,i)=>{
+        const occ=(state.floor&&state.floor.bld===col.key&&state.floor.fid===f.id);
+        html+=`<div class="eblk ${col.cls}${occ?' occ':''}" style="height:${heights[i]}px"><span>${f.name}</span></div>`;
+      });
+      html+='</div>';
+    }
+    const eb=document.getElementById('elevBody');
+    if(eb) eb.innerHTML=html;
+  }
+
+  function renderViewers(){
+    const on=state.viewers.filter(v=>v.online);
+    const off=state.viewers.filter(v=>!v.online);
+    const vc=document.getElementById('viewerCount');
+    if(vc) vc.textContent=on.length+' online';
+    const all=[...on,...off];
+    const list=document.getElementById('viewersList');
+    if(!list) return;
+    if(all.length===0){list.innerHTML='<div style="padding:8px 14px;font-size:12px;color:#888">No viewers yet.</div>';return;}
+    list.innerHTML=all.map(v=>`
+      <div class="vrow${v.online?'':' off'}">
+        <div class="vav${v.online?'':' gry'}">${ini(v.name)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:5px">
+            <div class="vname">${v.name}</div>
+            ${v.admin?'<span class="vadmin">Admin</span>':''}
+            ${v.name===state.user?'<span style="font-size:9px;color:#185FA5">(you)</span>':''}
+          </div>
+          <div class="vstatus${v.online?' on':''}">${v.online?'Online since '+v.since:'Left · '+v.left}</div>
+        </div>
+        <div class="vpip ${v.online?'on':'off'}"></div>
+      </div>`).join('');
+  }
+
+  function renderDlog(){
+    const b=document.getElementById('dlogBody');
+    if(!b) return;
+    if(state.dlog.length===0){b.innerHTML='<div class="dlog-empty">No messages sent yet.</div>';return;}
+    b.innerHTML=state.dlog.map(m=>{
+      const col=m.type==='page'?'#BA7517':'#3B6D11';
+      const lbl=m.type==='page'?'Att. Required!':'Are you OK?';
+      const rep=m.pending?'<span style="color:#888">awaiting...</span>':`<span style="color:#3B6D11;font-weight:500">${m.reply}</span>`;
+      return `<div class="dlog-entry"><span class="dt">${m.time}</span><span style="color:${col}">${lbl}</span> → ${rep}</div>`;
+    }).join('');
+  }
+
+  function showDevIdle(){
+    const loc=state.floor?state.floor.floorName+' / '+state.floor.bldName:'No location set';
+    const p=document.getElementById('sP');
+    const pVal=p?p.textContent:'—';
+    const scr=document.getElementById('devScr');
+    if(scr) scr.innerHTML=`
+      <div class="dev-idle-t">KKH Pumped Storage</div>
+      <div class="dev-idle-l" id="devLoc">${loc}</div>
+      <div class="dev-idle-s" id="devSens">${pVal} hPa</div>`;
+  }
+
+  function sendDev(type){
+    const isPage=type==='page';
+    const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
+    const col=isPage?'#EF9F27':'#63cc47';
+    state.pending={type,from:state.user};
+    state.dlog.unshift({type,from:state.user,time:now(),reply:null,pending:true});
+    if(state.dlog.length>8) state.dlog.pop();
+    addLog(`<b>${state.user}</b> sent <span style="color:${col};font-weight:500">${lbl}</span> → device`);
+    const iconSvg=isPage
+      ?'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
+      :'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
+    const scr=document.getElementById('devScr');
+    if(scr) scr.innerHTML=`
+      <div class="dev-msg-w">
+        <div class="dev-ring ${type}">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${isPage?'#EF9F27':'#63cc47'}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
+        </div>
+        <div class="dev-from">From: ${state.user}</div>
+        <div class="dev-msg ${type}">${lbl}</div>
+        <div class="dev-ts">${now()}</div>
+        <div class="dev-sep"></div>
+        <div class="dev-rl">Operator reply:</div>
+        <div class="dev-rbtns">
+          <button class="dev-rbtn${isPage?' urg':''}" id="devR1">${isPage?'Calling you right away':"I'm OK"}</button>
+          <button class="dev-dis" id="devR2">Dismiss</button>
+        </div>
+      </div>`;
+    document.getElementById('devR1').addEventListener('click', ()=>devReply(isPage?'Calling you right away':"I'm OK"));
+    document.getElementById('devR2').addEventListener('click', ()=>devReply('Dismiss'));
+    set(ref(db,'messages/pending'), {type, from:state.user, time:now(), replied:false});
+    renderDlog();
+  }
+
+  function devReply(msg){
+    if(state.pending){
+      state.dlog[0].reply=msg; state.dlog[0].pending=false;
+      addLog(`<b>Operator</b> replied via device: <span style="color:#3B6D11;font-weight:500">${msg}</span>`);
+      state.pending=null;
+      update(ref(db,'messages/pending'), {replied:true, reply:msg});
+    }
+    showDevIdle(); renderDlog();
+  }
+
+  function doExit(){
+    const last=state.floor?state.floor.bldName+' / '+state.floor.floorName:'unknown';
+    state.floor=null; state.sos=false; state.pending=null;
+    state.log=[]; state.dlog=[];
+    document.getElementById('sosAlert').classList.remove('show');
+    document.getElementById('btnSOS').classList.remove('active');
+    document.getElementById('btnSOS').textContent='SOS';
+    document.getElementById('exitConfirm').classList.remove('show');
+    updateHero(); renderBuildings(); renderElev(); renderDlog(); renderLog(); showDevIdle();
+    document.getElementById('tsDisp').textContent=now();
+    set(ref(db,'operator/location'), null);
+    set(ref(db,'operator/sos'), false);
+    set(ref(db,'operator/lastSeen'), now());
+    addLog(`<b>Tunnel exit confirmed</b> — last location: ${last}. Map and log cleared.`);
+  }
+
+  function listenFirebase(){
+    onValue(ref(db,'operator'), snap=>{
+      const data=snap.val();
+      if(!data) return;
+      state.operatorData=data;
+      if(data.pressure){
+        document.getElementById('sP').textContent=parseFloat(data.pressure).toFixed(1);
+        document.getElementById('sT').textContent=parseFloat(data.temp||0).toFixed(1);
+        document.getElementById('sH').textContent=Math.round(data.humidity||0);
+        document.getElementById('sD').textContent=data.heading||'—';
+        const ds=document.getElementById('devSens');
+        if(ds) ds.textContent=parseFloat(data.pressure).toFixed(1)+' hPa · '+parseFloat(data.temp||0).toFixed(1)+'°C';
+      }
+      if(data.gases){
+        const g=data.gases;
+        setGas('gVOC','gVOCv','gVOCs',g.voc+' ppm',g.voc>80?'High!':g.voc>50?'Caution':'Normal',g.voc>80?'danger':g.voc>50?'warn':'');
+        setGas('gCO2','gCO2v','gCO2s',g.co2+' ppm',g.co2>1000?'High':g.co2>700?'Above normal':'Normal',g.co2>1000?'danger':g.co2>700?'warn':'');
+        setGas('gIAQ','gIAQv','gIAQs',g.iaq,g.iaq>150?'Poor':g.iaq>100?'Moderate':'Good',g.iaq>150?'danger':g.iaq>100?'warn':'');
+        setGas('gH2S','gH2Sv','gH2Ss',g.h2s+' ppb',g.h2s>3?'Danger!':g.h2s>1?'Caution':'Normal',g.h2s>3?'danger':g.h2s>1?'warn':'');
+      }
+      if(data.location){
+        const loc=data.location;
+        state.floor={bld:loc.bld, fid:loc.fid, bldName:loc.bldName, floorName:loc.floorName, cls:loc.cls};
+        updateHero(); renderBuildings(); renderElev();
+        const devLoc=document.getElementById('devLoc');
+        if(devLoc) devLoc.textContent=loc.floorName+' / '+loc.bldName;
+      }
+      if(data.sos===true&&!state.sos){
+        state.sos=true;
+        document.getElementById('btnSOS').classList.add('active');
+        document.getElementById('btnSOS').textContent='Cancel SOS';
+        document.getElementById('sosAlert').classList.add('show');
+        document.getElementById('sosText').textContent='DISTRESS ALERT — '+now()+(state.floor?' | '+state.floor.floorName+' / '+state.floor.bldName:'');
+        addLog(`<b style="color:#A32D2D">SOS activated!</b>${state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''}`);
+      }
+      document.getElementById('tsDisp').textContent=now();
+    });
+
+    onValue(ref(db,'messages/pending'), snap=>{
+      const msg=snap.val();
+      if(!msg||msg.replied) return;
+      const isPage=msg.type==='page';
+      const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
+      const col=isPage?'#EF9F27':'#63cc47';
+      const iconSvg=isPage
+        ?'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
+        :'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
+      const scr=document.getElementById('devScr');
+      if(scr) scr.innerHTML=`
+        <div class="dev-msg-w">
+          <div class="dev-ring ${msg.type}">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${col}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
+          </div>
+          <div class="dev-from">From: ${msg.from}</div>
+          <div class="dev-msg ${msg.type}">${lbl}</div>
+          <div class="dev-ts">${msg.time}</div>
+          <div class="dev-sep"></div>
+          <div class="dev-rl">Operator reply:</div>
+          <div class="dev-rbtns">
+            <button class="dev-rbtn${isPage?' urg':''}" id="fbR1">${isPage?'Calling you right away':"I'm OK"}</button>
+            <button class="dev-dis" id="fbR2">Dismiss</button>
+          </div>
+        </div>`;
+      document.getElementById('fbR1').addEventListener('click', ()=>{
+        update(ref(db,'messages/pending'),{replied:true,reply:isPage?'Calling you right away':"I'm OK"});
+        showDevIdle();
+      });
+      document.getElementById('fbR2').addEventListener('click', ()=>{
+        update(ref(db,'messages/pending'),{replied:true,reply:'Dismiss'});
+        showDevIdle();
+      });
+    });
+
+    onValue(ref(db,'viewers'), snap=>{
+      const data=snap.val();
+      if(!data) return;
+      state.viewers=Object.values(data);
+      renderViewers();
+    });
+  }
+
+  function doLogin(){
+    const u=document.getElementById('inUser').value.trim();
+    const p=document.getElementById('inPass').value;
+    const err=document.getElementById('loginErr');
+    if(!u){err.textContent='Please enter a username.';err.classList.add('show');return;}
+    let admin=false;
+    if(u===ADMIN_NAME&&p===ADMIN_PASS){admin=true;}
+    else if(p===USER_PASS){}
+    else{err.textContent='Incorrect password. Please try again.';err.classList.add('show');return;}
+    err.classList.remove('show');
+    state.user=u; state.admin=admin;
+    const vRef=ref(db,'viewers/'+u.replace(/\s/g,'_'));
+    set(vRef,{name:u,online:true,since:now(),left:null,admin});
+    document.getElementById('hAv').textContent=ini(u);
+    document.getElementById('hName').textContent=u;
+    document.getElementById('pgLogin').style.display='none';
+    document.getElementById('pgApp').style.display='block';
+    addLog(`<b>${u}</b> connected as viewer${admin?' <span style="color:#185FA5">[Admin]</span>':''}`);
+    renderBuildings(); renderElev(); renderViewers(); listenFirebase();
+  }
+
+  function doLogout(){
+    const vRef=ref(db,'viewers/'+state.user.replace(/\s/g,'_'));
+    update(vRef,{online:false,left:now()});
+    state.user=null; state.admin=false; state.floor=null; state.sos=false; state.log=[]; state.dlog=[]; state.pending=null;
+    document.getElementById('inPass').value=''; document.getElementById('inUser').value='';
+    document.getElementById('pgApp').style.display='none';
+    document.getElementById('pgLogin').style.display='block';
+  }
+
+  window.addEventListener('DOMContentLoaded', ()=>{
+    renderElev(); renderDlog();
+
+    document.getElementById('btnLogin').addEventListener('click', doLogin);
+    document.getElementById('inPass').addEventListener('keydown', e=>{if(e.key==='Enter')doLogin();});
+    document.getElementById('btnSignout').addEventListener('click', doLogout);
+
+    document.getElementById('btnSOS').addEventListener('click', ()=>{
+      state.sos=!state.sos;
+      const btn=document.getElementById('btnSOS');
+      const alrt=document.getElementById('sosAlert');
+      if(state.sos){
+        btn.classList.add('active'); btn.textContent='Cancel SOS';
+        alrt.classList.add('show');
+        const loc=state.floor?' | '+state.floor.floorName+' / '+state.floor.bldName:'';
+        document.getElementById('sosText').textContent='DISTRESS ALERT — '+now()+loc;
+        addLog(`<b style="color:#A32D2D">SOS activated!</b>${state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''}`);
+        set(ref(db,'operator/sos'), true);
+      } else {
+        btn.classList.remove('active'); btn.textContent='SOS';
+        alrt.classList.remove('show');
+        addLog('SOS cleared');
+        set(ref(db,'operator/sos'), false);
+      }
+    });
+
+    document.getElementById('btnClearSOS').addEventListener('click', ()=>{
+      state.sos=false;
+      document.getElementById('btnSOS').classList.remove('active');
+      document.getElementById('btnSOS').textContent='SOS';
+      document.getElementById('sosAlert').classList.remove('show');
+      set(ref(db,'operator/sos'), false);
+      addLog('SOS cleared');
+    });
+
+    document.getElementById('btnExit').addEventListener('click', ()=>{
+      document.getElementById('exitConfirm').classList.add('show');
+      addLog('Tunnel exit requested — awaiting confirmation');
+    });
+    document.getElementById('btnCancelExit').addEventListener('click', ()=>{
+      document.getElementById('exitConfirm').classList.remove('show');
+      addLog('Exit cancelled');
+    });
+    document.getElementById('btnConfirmExit').addEventListener('click', doExit);
+    document.getElementById('btnPage').addEventListener('click', ()=>sendDev('page'));
+    document.getElementById('btnAYOK').addEventListener('click', ()=>sendDev('ayok'));
+    document.getElementById('btnClearLog').addEventListener('click', ()=>{state.log=[];renderLog();});
+
+    setInterval(()=>{if(state.user) document.getElementById('tsDisp').textContent=now();}, 1000);
+  });
+</script>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;color:#111}
+@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}}
+
+#pgLogin{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+.login-card{background:white;border:0.5px solid #e0e0e0;border-radius:12px;padding:2rem;width:100%;max-width:360px}
+@media(prefers-color-scheme:dark){.login-card{background:#242424;border-color:#333}}
+.ll-logo{display:flex;align-items:center;gap:10px;margin-bottom:1.5rem}
+.ll-icon{width:38px;height:38px;background:#185FA5;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.ll-icon svg{width:22px;height:22px;fill:white}
+.ll-title{font-size:16px;font-weight:500}
+.ll-sub{font-size:11px;color:#888;margin-top:2px}
+.fg{margin-bottom:14px}
+.fl{font-size:12px;color:#666;margin-bottom:5px;display:block}
+.fi{width:100%;padding:9px 12px;border:0.5px solid #ccc;border-radius:8px;font-size:13px;background:white;color:#111;outline:none}
+.fi:focus{border-color:#185FA5;box-shadow:0 0 0 2px #E6F1FB}
+@media(prefers-color-scheme:dark){.fi{background:#1a1a1a;color:#eee;border-color:#444}}
+.lbtn{width:100%;padding:10px;background:#185FA5;color:white;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;margin-top:6px}
+.lerr{font-size:12px;color:#A32D2D;background:#FCEBEB;border:0.5px solid #F09595;border-radius:6px;padding:8px 12px;margin-top:10px;display:none}
+.lerr.show{display:block}
+
+#pgApp{display:none}
+.app{padding:1rem;max-width:1100px;margin:0 auto}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;padding-bottom:1rem;border-bottom:0.5px solid #e0e0e0}
+@media(prefers-color-scheme:dark){.topbar{border-color:#333}}
+.hlogo{width:36px;height:36px;background:#185FA5;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.hlogo svg{width:20px;height:20px;fill:white}
+.htitle{font-size:18px;font-weight:500}
+.hsub{font-size:12px;color:#888;margin-top:2px}
+.hright{display:flex;align-items:center;gap:10px}
+.ldot{width:8px;height:8px;border-radius:50%;background:#3B6D11;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.4}}
+.upd{font-size:11px;color:#999}
+.uchip{display:flex;align-items:center;gap:6px;background:#f0f0f0;border:0.5px solid #ddd;border-radius:20px;padding:4px 10px 4px 4px}
+@media(prefers-color-scheme:dark){.uchip{background:#2a2a2a;border-color:#444}}
+.ucav{width:24px;height:24px;border-radius:50%;background:#B5D4F4;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:#0C447C}
+.ucname{font-size:12px}
+.signout{font-size:11px;color:#999;background:none;border:none;cursor:pointer;padding:2px 6px}
+
+.hero{background:white;border:2px solid #185FA5;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1rem;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+@media(prefers-color-scheme:dark){.hero{background:#242424}}
+.hero-icon{width:44px;height:44px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hero-icon svg{width:22px;height:22px;stroke:#185FA5;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hero-label{font-size:11px;color:#888;margin-bottom:3px;letter-spacing:0.4px}
+.hero-floor{font-size:20px;font-weight:500;line-height:1.2}
+.hero-floor.none{font-size:15px;color:#aaa;font-weight:400}
+.hero-bld{font-size:12px;color:#888;margin-top:3px}
+.hero-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sens-row{display:flex;gap:8px}
+.sens{text-align:center;background:#f5f5f5;border-radius:6px;padding:5px 10px}
+@media(prefers-color-scheme:dark){.sens{background:#2a2a2a}}
+.sv{font-size:14px;font-weight:500}
+.sl{font-size:9px;color:#999;margin-top:1px}
+.act-btns{display:flex;gap:8px}
+.exit-btn{background:none;border:1px solid #ccc;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.exit-btn svg{width:13px;height:13px}
+.sos-btn{background:#A32D2D;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.sos-btn.active{animation:sosf 0.5s infinite}
+@keyframes sosf{0%,100%{background:#A32D2D}50%{background:#E24B4A}}
+
+.sos-alert{display:none;align-items:center;gap:12px;background:#FCEBEB;border:1px solid #F09595;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
+.sos-alert.show{display:flex}
+.sos-alert-text{flex:1;font-size:13px;font-weight:500;color:#501313}
+.sos-clear{background:none;border:1px solid #A32D2D;color:#A32D2D;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.exit-confirm{display:none;align-items:center;gap:12px;background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
+.exit-confirm.show{display:flex}
+.exit-confirm-text{flex:1;font-size:13px;color:#633806}
+.exit-yes{background:#A32D2D;color:white;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;margin-right:6px}
+.exit-no{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
+
+.gas-bar{display:flex;gap:8px;margin-bottom:1rem}
+.gi{flex:1;background:#f5f5f5;border-radius:8px;padding:8px 10px;border:0.5px solid #e0e0e0}
+@media(prefers-color-scheme:dark){.gi{background:#2a2a2a;border-color:#333}}
+.gi.warn{background:#FAEEDA;border-color:#EF9F27}
+.gi.danger{background:#FCEBEB;border-color:#E24B4A}
+.gl{font-size:10px;color:#888;margin-bottom:3px}
+.gi.warn .gl{color:#854F0B}.gi.danger .gl{color:#A32D2D}
+.gv{font-size:13px;font-weight:500}
+.gi.warn .gv{color:#633806}.gi.danger .gv{color:#791F1F}
+.gs{font-size:10px;margin-top:1px;color:#888}
+.gi.warn .gs{color:#854F0B}.gi.danger .gs{color:#A32D2D}
+
+.bldgs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);gap:1rem;margin-bottom:1rem}
+.bld{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
+@media(prefers-color-scheme:dark){.bld{background:#242424;border-color:#333}}
+.bh{padding:9px 12px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
+@media(prefers-color-scheme:dark){.bh{background:#2a2a2a;border-color:#333}}
+.bn{font-size:12px;font-weight:500}
+.bb{font-size:10px;padding:2px 7px;border-radius:10px}
+.bb-mh{background:#E6F1FB;color:#185FA5}.bb-tfh{background:#EAF3DE;color:#3B6D11}.bb-aph{background:#EEEDFE;color:#534AB7}.bb-tun{background:#F1EFE8;color:#5F5E5A}
+.fl-row{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:0.5px solid #e0e0e0;cursor:pointer;position:relative;transition:background 0.12s}
+@media(prefers-color-scheme:dark){.fl-row{border-color:#333}}
+.fl-row:last-child{border-bottom:none}
+.fl-row:hover{background:#f9f9f9}
+@media(prefers-color-scheme:dark){.fl-row:hover{background:#2a2a2a}}
+.fl-row.sel-mh{background:#E6F1FB}.fl-row.sel-tfh{background:#EAF3DE}.fl-row.sel-aph{background:#EEEDFE}.fl-row.sel-tun{background:#F1EFE8}
+.fl-row.sel-mh::before,.fl-row.sel-tfh::before,.fl-row.sel-aph::before,.fl-row.sel-tun::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:0 2px 2px 0}
+.fl-row.sel-mh::before{background:#185FA5}.fl-row.sel-tfh::before{background:#3B6D11}.fl-row.sel-aph::before{background:#534AB7}.fl-row.sel-tun::before{background:#888780}
+.fl-icon{width:30px;height:30px;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+@media(prefers-color-scheme:dark){.fl-icon{background:#333}}
+.fl-icon svg{width:16px;height:16px;stroke:#888}
+.fl-row.sel-mh .fl-icon{background:#B5D4F4}.fl-row.sel-tfh .fl-icon{background:#C0DD97}.fl-row.sel-aph .fl-icon{background:#CECBF6}.fl-row.sel-tun .fl-icon{background:#D3D1C7}
+.fl-name{font-size:11px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fl-desc{font-size:10px;color:#888}
+.wdot{width:10px;height:10px;border-radius:50%;background:#185FA5;animation:blink 1.5s infinite}
+
+.elev{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden;margin-bottom:1rem}
+@media(prefers-color-scheme:dark){.elev{background:#242424;border-color:#333}}
+.elev-hdr{padding:9px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
+@media(prefers-color-scheme:dark){.elev-hdr{background:#2a2a2a;border-color:#333}}
+.elev-title{font-size:12px;font-weight:500}
+.elev-body{padding:1rem;display:flex;gap:8px;align-items:flex-end}
+.ecol{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.ecol-title{font-size:10px;font-weight:500;color:#888;margin-bottom:3px;text-align:center}
+.eblk{width:100%;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:500}
+.eblk.mh{background:#E6F1FB;color:#0C447C}.eblk.tfh{background:#EAF3DE;color:#27500A}.eblk.aph{background:#EEEDFE;color:#3C3489}.eblk.tun{background:#F1EFE8;color:#444441}
+.eblk.occ.mh{background:#B5D4F4;outline:2px solid #185FA5}.eblk.occ.tfh{background:#C0DD97;outline:2px solid #3B6D11}.eblk.occ.aph{background:#CECBF6;outline:2px solid #534AB7}.eblk.occ.tun{background:#D3D1C7;outline:2px solid #888780}
+
+.bottom-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1rem;margin-bottom:1rem}
+.panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
+@media(prefers-color-scheme:dark){.panel{background:#242424;border-color:#333}}
+.ph{padding:10px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
+@media(prefers-color-scheme:dark){.ph{background:#2a2a2a;border-color:#333}}
+.pt{font-size:13px;font-weight:500}
+.ps{font-size:11px;color:#999}
+.pb{padding:12px 14px}
+.dev-row{display:flex;gap:14px;align-items:flex-start}
+.dev-frame{background:#12121f;border-radius:16px;width:185px;flex-shrink:0;overflow:hidden;border:2px solid #2a2a45}
+.dev-top{background:#0a0a18;padding:6px 12px;display:flex;align-items:center;justify-content:space-between}
+.dev-brand{font-size:8px;color:#4a9eff;font-weight:600;letter-spacing:1px}
+.dev-batt{width:18px;height:9px;border:1.5px solid #4a9eff;border-radius:2px;position:relative}
+.dev-batt-fill{position:absolute;left:1.5px;top:1.5px;bottom:1.5px;width:70%;background:#4a9eff;border-radius:1px}
+.dev-scr{background:#0d1117;padding:12px;min-height:155px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}
+.dev-idle-t{font-size:10px;color:#4a9eff;font-weight:500;letter-spacing:0.5px;text-align:center}
+.dev-idle-l{font-size:10px;color:#9ca3af;text-align:center;line-height:1.4}
+.dev-idle-s{font-size:11px;color:#6b7280;text-align:center;margin-top:2px}
+.dev-msg-w{display:flex;flex-direction:column;align-items:center;gap:7px;width:100%}
+.dev-ring{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.dev-ring.page{background:rgba(186,117,23,0.15);border:2px solid #BA7517}
+.dev-ring.ayok{background:rgba(99,204,71,0.12);border:2px solid #63cc47}
+.dev-from{font-size:8px;color:#6b7280}
+.dev-msg{font-size:12px;font-weight:500;text-align:center;line-height:1.3}
+.dev-msg.page{color:#EF9F27}.dev-msg.ayok{color:#63cc47}
+.dev-ts{font-size:8px;color:#4b5563}
+.dev-sep{width:100%;height:0.5px;background:#1f2937;margin:2px 0}
+.dev-rl{font-size:9px;color:#6b7280;align-self:flex-start}
+.dev-rbtns{display:flex;flex-direction:column;gap:4px;width:100%;margin-top:2px}
+.dev-rbtn{background:#1a3a20;color:#63cc47;border:1px solid #3B6D11;border-radius:6px;padding:7px;font-size:10px;font-weight:500;cursor:pointer;text-align:center;width:100%}
+.dev-rbtn.urg{background:#1e1e35;color:#4a9eff;border-color:#185FA5}
+.dev-dis{background:none;border:1px solid #1f2937;color:#6b7280;border-radius:6px;padding:6px;font-size:10px;cursor:pointer;width:100%}
+.dev-bot{background:#0a0a18;padding:5px 12px;display:flex;justify-content:center;gap:18px}
+.dev-dot{width:7px;height:7px;border-radius:50%;background:#1e1e35;border:1.5px solid #3a3a5a}
+.dev-right{flex:1;display:flex;flex-direction:column;gap:8px}
+.msg-btns{display:flex;flex-direction:column;gap:7px}
+.mbtn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:500;width:100%;text-align:left}
+.mbtn:hover{opacity:0.85}
+.mbtn.page{background:#BA7517;color:white}.mbtn.ayok{background:#3B6D11;color:white}
+.mbtn-icon{width:30px;height:30px;border-radius:6px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mbtn-icon svg{width:15px;height:15px}
+.mbtn-title{font-size:12px;font-weight:500}
+.mbtn-desc{font-size:10px;opacity:0.8;margin-top:1px}
+.dlog-box{background:#f5f5f5;border-radius:8px;border:0.5px solid #e0e0e0;padding:9px 12px}
+@media(prefers-color-scheme:dark){.dlog-box{background:#2a2a2a;border-color:#333}}
+.dlog-title{font-size:11px;font-weight:500;color:#888;margin-bottom:6px}
+.dlog-entry{font-size:10px;padding:4px 0;border-bottom:0.5px solid #e0e0e0;color:#666;line-height:1.4}
+.dlog-entry:last-child{border-bottom:none}
+.dlog-empty{font-size:10px;color:#aaa;font-style:italic}
+.dt{color:#aaa;margin-right:4px}
+.viewers-panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
+@media(prefers-color-scheme:dark){.viewers-panel{background:#242424;border-color:#333}}
+.vrow{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:0.5px solid #e0e0e0}
+@media(prefers-color-scheme:dark){.vrow{border-color:#333}}
+.vrow:last-child{border-bottom:none}
+.vrow.off{opacity:0.5}
+.vav{width:28px;height:28px;border-radius:50%;background:#B5D4F4;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:#0C447C;flex-shrink:0}
+.vav.gry{background:#D3D1C7;color:#444441}
+.vname{font-size:12px;font-weight:500;flex:1}
+.vstatus{font-size:10px;color:#aaa}
+.vstatus.on{color:#3B6D11}
+.vpip{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.vpip.on{background:#3B6D11;animation:blink 2s infinite}.vpip.off{background:#aaa}
+.vadmin{font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:6px}
+.log-wrap{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
+@media(prefers-color-scheme:dark){.log-wrap{background:#242424;border-color:#333}}
+.log-hdr{padding:10px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
+@media(prefers-color-scheme:dark){.log-hdr{background:#2a2a2a;border-color:#333}}
+.log-title{font-size:13px;font-weight:500}
+.log-clr-btn{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer}
+.log-body{max-height:150px;overflow-y:auto}
+.log-row{display:flex;gap:12px;padding:7px 14px;border-bottom:0.5px solid #e0e0e0;font-size:11px}
+@media(prefers-color-scheme:dark){.log-row{border-color:#333}}
+.log-row:last-child{border-bottom:none}
+.log-t{color:#aaa;white-space:nowrap;flex-shrink:0}
+.log-x{color:#666}
+.log-x b{color:#111;font-weight:500}
+@media(prefers-color-scheme:dark){.log-x b{color:#eee}}
+.firebase-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:#888;margin-top:4px}
+.firebase-badge svg{width:12px;height:12px}
+</style>
+</head>
+<body>
+
+<div id="pgLogin">
+  <div class="login-card">
+    <div class="ll-logo">
+      <div class="ll-icon"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
+      <div>
+        <div class="ll-title">Operator Tracker</div>
+        <div class="ll-sub">KKH Pumped Storage</div>
+      </div>
+    </div>
+    <div class="fg"><label class="fl">Username</label><input class="fi" id="inUser" type="text" placeholder="Enter your name" autocomplete="off"/></div>
+    <div class="fg"><label class="fl">Password</label><input class="fi" id="inPass" type="password" placeholder="Enter password" autocomplete="off"/></div>
+    <button class="lbtn" id="btnLogin">Sign in</button>
+    <div class="lerr" id="loginErr">Incorrect password. Please try again.</div>
+    <div class="firebase-badge" style="margin-top:12px">
+      <svg viewBox="0 0 24 24" fill="#F57C00"><path d="M5.85 12.21L3.29 20l7.64-4.35L5.85 12.21zM20.71 20L13.07 3.5l-1.5 5.57 4.5 7.79L20.71 20zM12.14 9.86L10.71 4.5 3.29 20l8.85-10.14z"/></svg>
+      Connected to Firebase — live data
+    </div>
+  </div>
+</div>
+
+<div id="pgApp">
+<div class="app">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="hlogo"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
+      <div><div class="htitle">Operator Tracker</div><div class="hsub">KKH Pumped Storage — Real-time Location Monitoring</div></div>
+    </div>
+    <div class="hright">
+      <div class="ldot"></div>
+      <span style="font-size:12px;color:#888">Live</span>
+      <div class="upd" id="tsDisp">--:--:--</div>
+      <div class="uchip">
+        <div class="ucav" id="hAv">?</div>
+        <div class="ucname" id="hName">—</div>
+        <button class="signout" id="btnSignout">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-icon"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+    <div>
+      <div class="hero-label">Operator current location</div>
+      <div id="heroFloor" class="hero-floor none">No location detected — awaiting device data</div>
+      <div id="heroBld" class="hero-bld" style="display:none"></div>
+    </div>
+    <div class="hero-right">
+      <div class="sens-row">
+        <div class="sens"><div class="sv" id="sP">—</div><div class="sl">hPa</div></div>
+        <div class="sens"><div class="sv" id="sT">—</div><div class="sl">°C</div></div>
+        <div class="sens"><div class="sv" id="sH">—</div><div class="sl">Hum%</div></div>
+        <div class="sens"><div class="sv" id="sD">—</div><div class="sl">Dir</div></div>
+      </div>
+      <div class="act-btns">
+        <button class="exit-btn" id="btnExit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          Exit tunnel
+        </button>
+        <button class="sos-btn" id="btnSOS">SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sos-alert" id="sosAlert">
+    <div class="sos-alert-text" id="sosText">Distress alert!</div>
+    <button class="sos-clear" id="btnClearSOS">Clear</button>
+  </div>
+  <div class="exit-confirm" id="exitConfirm">
+    <div class="exit-confirm-text">Confirm tunnel exit? Map and event log will be cleared automatically.</div>
+    <button class="exit-yes" id="btnConfirmExit">Confirm exit</button>
+    <button class="exit-no" id="btnCancelExit">Cancel</button>
+  </div>
+
+  <div class="gas-bar">
+    <div class="gi" id="gVOC"><div class="gl">VOC</div><div class="gv" id="gVOCv">—</div><div class="gs" id="gVOCs">Waiting</div></div>
+    <div class="gi" id="gCO2"><div class="gl">CO₂ ppm</div><div class="gv" id="gCO2v">—</div><div class="gs" id="gCO2s">Waiting</div></div>
+    <div class="gi" id="gIAQ"><div class="gl">IAQ</div><div class="gv" id="gIAQv">—</div><div class="gs" id="gIAQs">Waiting</div></div>
+    <div class="gi" id="gH2S"><div class="gl">H₂S ppb</div><div class="gv" id="gH2Sv">—</div><div class="gs" id="gH2Ss">Waiting</div></div>
+  </div>
+
+  <div class="bldgs" id="bldgs"></div>
+
+  <div class="elev">
+    <div class="elev-hdr"><div class="elev-title">Elevation cross-section — all structures</div><div class="upd">Higher = upper floor</div></div>
+    <div class="elev-body" id="elevBody"></div>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="panel">
+      <div class="ph"><div class="pt">Device messaging</div><div class="ps">Responses via M5Stack buttons</div></div>
+      <div class="pb">
+        <div class="dev-row">
+          <div class="dev-frame">
+            <div class="dev-top"><div class="dev-brand">M5STACK S3</div><div class="dev-batt"><div class="dev-batt-fill"></div></div></div>
+            <div class="dev-scr" id="devScr">
+              <div class="dev-idle-t">KKH Pumped Storage</div>
+              <div class="dev-idle-l" id="devLoc">No location set</div>
+              <div class="dev-idle-s" id="devSens">— hPa</div>
+            </div>
+            <div class="dev-bot"><div class="dev-dot"></div><div class="dev-dot"></div><div class="dev-dot"></div></div>
+          </div>
+          <div class="dev-right">
+            <div class="msg-btns">
+              <button class="mbtn page" id="btnPage">
+                <div class="mbtn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+                <div><div class="mbtn-title">Immediate Attendance Required !</div><div class="mbtn-desc">Urgent alert sent to operator's device</div></div>
+              </button>
+              <button class="mbtn ayok" id="btnAYOK">
+                <div class="mbtn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+                <div><div class="mbtn-title">Are you OK?</div><div class="mbtn-desc">Wellness check — operator replies on device</div></div>
+              </button>
+            </div>
+            <div class="dlog-box">
+              <div class="dlog-title">Message log — device responses</div>
+              <div id="dlogBody"><div class="dlog-empty">No messages sent yet.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="viewers-panel">
+      <div class="ph"><div class="pt">Viewers connected</div><div class="ps" id="viewerCount">0 online</div></div>
+      <div id="viewersList"><div style="padding:8px 14px;font-size:12px;color:#aaa">No viewers yet.</div></div>
+    </div>
+  </div>
+
+  <div class="log-wrap">
+    <div class="log-hdr"><div class="log-title">Event log</div><button class="log-clr-btn" id="btnClearLog">Clear</button></div>
+    <div class="log-body" id="logBody"></div>
+  </div>
+</div>
+</div>
+
+</body>
+</html>
