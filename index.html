@@ -279,6 +279,7 @@
     document.getElementById('sosAlert').classList.remove('show');
     document.getElementById('btnSOS').classList.remove('active');
     document.getElementById('btnSOS').textContent='SOS';
+    document.getElementById('btnFall').classList.remove('active');
     document.getElementById('exitConfirm').classList.remove('show');
     updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
     document.getElementById('tsDisp').textContent=now();
@@ -330,8 +331,9 @@
       const fallText=document.getElementById('fallText');
       if(fallEl&&!fallEl.classList.contains('show')){
         fallEl.classList.add('show');
+        document.getElementById('btnFall').classList.add('active');
         if(fallText) fallText.textContent='Fall detected at '+data.time+(state.floor?' — '+state.floor.floorName+' / '+state.floor.bldName:'');
-        addLog('<b style="color:#A32D2D">⚠ Fall detected!</b>'+(state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''));
+        addLog('<b style="color:#7C3AED">⚠ Fall detected!</b>'+(state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''));
       }
     });
  
@@ -478,6 +480,25 @@
     document.getElementById('inPass').addEventListener('keydown', e=>{if(e.key==='Enter')doLogin();});
     document.getElementById('btnSignout').addEventListener('click', doLogout);
  
+    document.getElementById('btnFall').addEventListener('click', ()=>{
+      const btn=document.getElementById('btnFall');
+      const isActive=btn.classList.contains('active');
+      if(!isActive){
+        btn.classList.add('active');
+        const fallEl=document.getElementById('fallAlert');
+        const fallText=document.getElementById('fallText');
+        if(fallEl) fallEl.classList.add('show');
+        if(fallText) fallText.textContent='Fall detected'+(state.floor?' — '+state.floor.floorName+' / '+state.floor.bldName:'— location unknown');
+        addLog('<b style="color:#7C3AED">⚠ Fall detected!</b>'+(state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:' — location unknown'));
+        set(ref(db,'operator/fall'), {detected:true, time:now(), location:state.floor?state.floor.floorName+' / '+state.floor.bldName:'unknown'});
+      } else {
+        btn.classList.remove('active');
+        document.getElementById('fallAlert').classList.remove('show');
+        set(ref(db,'operator/fall'), {detected:false, time:null});
+        addLog('Fall alert cleared');
+      }
+    });
+ 
     document.getElementById('btnSOS').addEventListener('click', ()=>{
       state.sos=!state.sos;
       const btn=document.getElementById('btnSOS');
@@ -520,6 +541,7 @@
     document.getElementById('btnClearLog').addEventListener('click', ()=>{state.log=[];renderLog();});
     document.getElementById('btnClearFall').addEventListener('click', ()=>{
       document.getElementById('fallAlert').classList.remove('show');
+      document.getElementById('btnFall').classList.remove('active');
       set(ref(db,'operator/fall'), {detected:false,time:null});
       addLog('Fall alert cleared');
     });
@@ -582,6 +604,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .act-btns{display:flex;gap:8px}
 .exit-btn{background:none;border:1px solid #ccc;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
 .exit-btn svg{width:13px;height:13px}
+.fall-btn{background:#7C3AED;color:white;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.fall-btn.active{animation:fallblink 0.5s infinite}
+@keyframes fallblink{0%,100%{background:#7C3AED}50%{background:#A855F7}}
 .sos-btn{background:#A32D2D;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
 .sos-btn.active{animation:sosf 0.5s infinite}
 @keyframes sosf{0%,100%{background:#A32D2D}50%{background:#E24B4A}}
@@ -767,6 +792,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button class="exit-btn" id="btnExit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           Exit tunnel
+        </button>
+        <button class="fall-btn" id="btnFall">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v5l-3 3"/><path d="M9 15l-2 4"/><path d="M15 15l2 4"/><path d="M8 10l-3 2"/><path d="M16 10l3 2"/></svg>
+          Fall detected
         </button>
         <button class="sos-btn" id="btnSOS">SOS</button>
       </div>
