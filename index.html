@@ -28,6 +28,7 @@
   const USER_PASS  = "AB17$";
  
   const FLOORS = {
+    CTR: [{id:'CTR', name:'Control Room', desc:'Surface — router anchor', cls:'ctr', icon:'control'}],
     TUN: [{id:'ENT', name:'Main Access Tunnel', desc:'Entry point — MAT', cls:'tun', icon:'tunnel'}],
     TFH: [
       {id:'2', name:'TFH 2', desc:'Upper', cls:'tfh', icon:'transformer'},
@@ -49,6 +50,7 @@
     ]
   };
   const BLDS = [
+    {key:'CTR', label:'Control Room',      badge:'CTR', bc:'bb-ctr'},
     {key:'TUN', label:'MAT Tunnel',        badge:'MAT', bc:'bb-tun'},
     {key:'TFH', label:'Transformer Hall',  badge:'TFH', bc:'bb-tfh'},
     {key:'MH',  label:'Machine Hall',      badge:'MH',  bc:'bb-mh'},
@@ -136,6 +138,10 @@
   function onFloorClick(e){
     const el=e.currentTarget;
     const bld=el.dataset.bld, fid=el.dataset.fid, bname=el.dataset.bname, fname=el.dataset.fname, cls=el.dataset.cls;
+    if(bld==='CTR'){
+      doAutoExit(bname);
+      return;
+    }
     state.floor={bld, fid, bldName:bname, floorName:fname, cls};
     updateHero();
     renderBuildings();
@@ -145,6 +151,24 @@
     document.getElementById('tsDisp').textContent=now();
     set(ref(db,'operator/location'), {bld, fid, bldName:bname, floorName:fname, cls, updatedAt:now()});
     set(ref(db,'operator/lastSeen'), now());
+  }
+ 
+  function doAutoExit(bname){
+    const last=state.floor?state.floor.bldName+' / '+state.floor.floorName:'unknown';
+    state.floor=null; state.sos=false; state.pending=null;
+    state.log=[]; state.dlog=[];
+    document.getElementById('sosAlert').classList.remove('show');
+    document.getElementById('btnSOS').classList.remove('active');
+    document.getElementById('btnSOS').textContent='SOS';
+    document.getElementById('exitConfirm').classList.remove('show');
+    const fallEl=document.getElementById('fallAlert');
+    if(fallEl) fallEl.classList.remove('show');
+    updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
+    document.getElementById('tsDisp').textContent=now();
+    set(ref(db,'operator/location'), null);
+    set(ref(db,'operator/sos'), false);
+    set(ref(db,'operator/lastSeen'), now());
+    addLog(`<b>Auto-exit:</b> Operator reached <b>${bname}</b> — map and log cleared. Last location: ${last}`);
   }
  
  
@@ -197,6 +221,7 @@
     const isPage=type==='page';
     const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
     const col=isPage?'#EF9F27':'#63cc47';
+    const r1txt=isPage?'Calling you right away':"I'm OK";
     state.pending={type,from:state.user};
     state.dlog.unshift({type,from:state.user,time:now(),reply:null,pending:true});
     if(state.dlog.length>8) state.dlog.pop();
@@ -216,28 +241,33 @@
         <div class="dev-sep"></div>
         <div class="dev-rl">Operator reply:</div>
         <div class="dev-rbtns">
-          <button class="dev-rbtn${isPage?' urg':''}" id="devR1">${isPage?'Calling you right away':"I'm OK"}</button>
-          <button class="dev-dis" id="devR2">Dismiss</button>
+          <button class="dev-rbtn${isPage?' urg':''}" id="devR1" data-reply="${r1txt}" data-msgtype="${lbl}">${r1txt}</button>
+          <button class="dev-dis" id="devR2" data-reply="Dismiss" data-msgtype="${lbl}">Dismiss</button>
         </div>
       </div>`;
-    document.getElementById('devR1').addEventListener('click', ()=>devReply(isPage?'Calling you right away':"I'm OK"));
-    document.getElementById('devR2').addEventListener('click', ()=>devReply('Dismiss'));
+    document.getElementById('devR1').addEventListener('click', function(){
+      const reply=this.getAttribute('data-reply');
+      const msgtype=this.getAttribute('data-msgtype');
+      devReply(reply, msgtype);
+    });
+    document.getElementById('devR2').addEventListener('click', function(){
+      const reply=this.getAttribute('data-reply');
+      const msgtype=this.getAttribute('data-msgtype');
+      devReply(reply, msgtype);
+    });
     set(ref(db,'messages/pending'), {type, from:state.user, time:now(), replied:false});
     renderDlog();
   }
  
-  function devReply(msg){
+  function devReply(msg, msgtype){
     const dlogEntry=state.dlog.length>0?state.dlog[0]:null;
     if(dlogEntry&&dlogEntry.pending){
       dlogEntry.reply=msg; dlogEntry.pending=false;
     }
-    const sender=dlogEntry?dlogEntry.from:'viewer';
-    const msgType=dlogEntry&&dlogEntry.type==='page'?'Immediate Attendance Required':'Are you OK?';
-    addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${msgType}`);
-    if(state.pending){
-      state.pending=null;
-      update(ref(db,'messages/pending'), {replied:true, reply:msg});
-    }
+    const label=msgtype||'message';
+    addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${label}`);
+    state.pending=null;
+    update(ref(db,'messages/pending'), {replied:true, reply:msg});
     showDevIdle(); renderDlog();
   }
  
@@ -557,19 +587,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 @media(prefers-color-scheme:dark){.bh{background:#2a2a2a;border-color:#333}}
 .bn{font-size:12px;font-weight:500}
 .bb{font-size:10px;padding:2px 7px;border-radius:10px}
-.bb-mh{background:#E6F1FB;color:#185FA5}.bb-tfh{background:#EAF3DE;color:#3B6D11}.bb-aph{background:#EEEDFE;color:#534AB7}.bb-tun{background:#F1EFE8;color:#5F5E5A}
+.bb-mh{background:#E6F1FB;color:#185FA5}.bb-tfh{background:#EAF3DE;color:#3B6D11}.bb-aph{background:#EEEDFE;color:#534AB7}.bb-ctr{background:#E6F1FB;color:#0C447C}.bb-tun{background:#F1EFE8;color:#5F5E5A}
 .fl-row{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:0.5px solid #e0e0e0;cursor:pointer;position:relative;transition:background 0.12s}
 @media(prefers-color-scheme:dark){.fl-row{border-color:#333}}
 .fl-row:last-child{border-bottom:none}
 .fl-row:hover{background:#f9f9f9}
 @media(prefers-color-scheme:dark){.fl-row:hover{background:#2a2a2a}}
-.fl-row.sel-mh{background:#E6F1FB}.fl-row.sel-tfh{background:#EAF3DE}.fl-row.sel-aph{background:#EEEDFE}.fl-row.sel-tun{background:#F1EFE8}
+.fl-row.sel-mh{background:#E6F1FB}.fl-row.sel-tfh{background:#EAF3DE}.fl-row.sel-aph{background:#EEEDFE}.fl-row.sel-ctr{background:#E6F1FB}.fl-row.sel-tun{background:#F1EFE8}
 .fl-row.sel-mh::before,.fl-row.sel-tfh::before,.fl-row.sel-aph::before,.fl-row.sel-tun::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:0 2px 2px 0}
-.fl-row.sel-mh::before{background:#185FA5}.fl-row.sel-tfh::before{background:#3B6D11}.fl-row.sel-aph::before{background:#534AB7}.fl-row.sel-tun::before{background:#888780}
+.fl-row.sel-mh::before{background:#185FA5}.fl-row.sel-tfh::before{background:#3B6D11}.fl-row.sel-aph::before{background:#534AB7}.fl-row.sel-ctr::before{background:#0C447C}.fl-row.sel-tun::before{background:#888780}
 .fl-icon{width:30px;height:30px;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 @media(prefers-color-scheme:dark){.fl-icon{background:#333}}
 .fl-icon svg{width:16px;height:16px;stroke:#888}
-.fl-row.sel-mh .fl-icon{background:#B5D4F4}.fl-row.sel-tfh .fl-icon{background:#C0DD97}.fl-row.sel-aph .fl-icon{background:#CECBF6}.fl-row.sel-tun .fl-icon{background:#D3D1C7}
+.fl-row.sel-mh .fl-icon{background:#B5D4F4}.fl-row.sel-tfh .fl-icon{background:#C0DD97}.fl-row.sel-aph .fl-icon{background:#CECBF6}.fl-row.sel-ctr .fl-icon{background:#B5D4F4}.fl-row.sel-tun .fl-icon{background:#D3D1C7}
 .fl-name{font-size:11px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fl-desc{font-size:10px;color:#888}
 .wdot{width:10px;height:10px;border-radius:50%;background:#185FA5;animation:blink 1.5s infinite}
@@ -766,7 +796,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
  
   <div class="bottom-grid">
     <div class="panel">
-      <div class="ph"><div class="pt">Device messaging</div><div class="ps">Responses via M5Stack buttons</div></div>
+      <div class="ph"><div class="pt">Device messaging</div><div class="ps">Responses via Operator Tracker Watch</div></div>
       <div class="pb">
         <div class="dev-row">
           <div class="dev-frame">
