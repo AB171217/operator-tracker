@@ -217,6 +217,7 @@
   }
  
   var lastSentMsg={type:null,lbl:null};
+  var activeDlogEntry=null;
   function sendDev(type){
     const isPage=type==='page';
     const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
@@ -224,7 +225,9 @@
     const col=isPage?'#EF9F27':'#63cc47';
     const r1txt=isPage?'Calling you right away':"I'm OK";
     state.pending={type,from:state.user};
-    state.dlog.unshift({type,from:state.user,time:now(),reply:null,pending:true});
+    const entry={type,from:state.user,time:now(),reply:null,pending:true};
+    activeDlogEntry=entry;
+    state.dlog.unshift(entry);
     if(state.dlog.length>8) state.dlog.pop();
     addLog(`<b>${state.user}</b> sent <span style="color:${col};font-weight:500">${lbl}</span> → device`);
     const iconSvg=isPage
@@ -261,9 +264,13 @@
   }
  
   function devReply(msg, msgtype){
-    const dlogEntry=state.dlog.length>0?state.dlog[0]:null;
-    if(dlogEntry&&dlogEntry.pending){
-      dlogEntry.reply=msg; dlogEntry.pending=false;
+    if(activeDlogEntry){
+      activeDlogEntry.reply=msg;
+      activeDlogEntry.pending=false;
+      activeDlogEntry=null;
+    } else if(state.dlog.length>0&&state.dlog[0].pending){
+      state.dlog[0].reply=msg;
+      state.dlog[0].pending=false;
     }
     const label=msgtype||lastSentMsg.lbl||'message';
     addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${label}`);
@@ -760,16 +767,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
   <div class="fall-alert" id="fallAlert">
     <div style="display:flex;align-items:center;gap:10px;flex:1">
-      <div style="width:36px;height:36px;border-radius:50%;background:#A32D2D;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:sosf 0.6s infinite">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      <div style="width:40px;height:40px;border-radius:50%;background:#A32D2D;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:sosf 0.5s infinite">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M6 20v-4a6 6 0 0 1 12 0v4"/><line x1="12" y1="14" x2="12" y2="22"/></svg>
       </div>
       <div>
-        <div style="font-size:13px;font-weight:500;color:#501313">Fall detected!</div>
+        <div style="font-size:14px;font-weight:500;color:#501313">Fall detected!</div>
         <div class="fall-alert-text" id="fallText">Operator may have fallen — check immediately</div>
       </div>
     </div>
     <button class="sos-clear" id="btnClearFall">Clear</button>
   </div>
+ 
   <div class="exit-confirm" id="exitConfirm">
     <div class="exit-confirm-text">Confirm tunnel exit? Map and event log will be cleared automatically.</div>
     <button class="exit-yes" id="btnConfirmExit">Confirm exit</button>
