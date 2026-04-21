@@ -94,7 +94,6 @@
     b.innerHTML=state.log.map(e=>`<div class="log-row"><div class="log-t">${e.t}</div><div class="log-x">${e.h}</div></div>`).join('');
   }
  
- 
   function updateHero(){
     const fe=document.getElementById('heroFloor');
     const be=document.getElementById('heroBld');
@@ -138,10 +137,6 @@
   function onFloorClick(e){
     const el=e.currentTarget;
     const bld=el.dataset.bld, fid=el.dataset.fid, bname=el.dataset.bname, fname=el.dataset.fname, cls=el.dataset.cls;
-    if(bld==='CTR'){
-      doAutoExit(bname);
-      return;
-    }
     state.floor={bld, fid, bldName:bname, floorName:fname, cls};
     updateHero();
     renderBuildings();
@@ -151,26 +146,30 @@
     document.getElementById('tsDisp').textContent=now();
     set(ref(db,'operator/location'), {bld, fid, bldName:bname, floorName:fname, cls, updatedAt:now()});
     set(ref(db,'operator/lastSeen'), now());
+    if(bld==='CTR'){
+      setTimeout(()=>doAutoExit(bname), 800);
+    }
   }
  
   function doAutoExit(bname){
     const last=state.floor?state.floor.bldName+' / '+state.floor.floorName:'unknown';
-    state.floor=null; state.sos=false; state.pending=null;
-    state.log=[]; state.dlog=[];
-    document.getElementById('sosAlert').classList.remove('show');
-    document.getElementById('btnSOS').classList.remove('active');
-    document.getElementById('btnSOS').textContent='SOS';
-    document.getElementById('exitConfirm').classList.remove('show');
-    const fallEl=document.getElementById('fallAlert');
-    if(fallEl) fallEl.classList.remove('show');
-    updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
-    document.getElementById('tsDisp').textContent=now();
-    set(ref(db,'operator/location'), null);
-    set(ref(db,'operator/sos'), false);
-    set(ref(db,'operator/lastSeen'), now());
-    addLog(`<b>Auto-exit:</b> Operator reached <b>${bname}</b> — map and log cleared. Last location: ${last}`);
+    addLog(`<b>Operator reached Control Room</b> — auto-exit triggered. Last location: ${last}`);
+    setTimeout(()=>{
+      state.floor=null; state.sos=false; state.pending=null;
+      state.log=[]; state.dlog=[];
+      document.getElementById('sosAlert').classList.remove('show');
+      document.getElementById('btnSOS').classList.remove('active');
+      document.getElementById('btnSOS').textContent='SOS';
+      document.getElementById('exitConfirm').classList.remove('show');
+      const fallEl=document.getElementById('fallAlert');
+      if(fallEl) fallEl.classList.remove('show');
+      updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
+      document.getElementById('tsDisp').textContent=now();
+      set(ref(db,'operator/location'), null);
+      set(ref(db,'operator/sos'), false);
+      set(ref(db,'operator/lastSeen'), now());
+    }, 1500);
   }
- 
  
   function renderViewers(){
     const on=state.viewers.filter(v=>v.online);
@@ -217,9 +216,11 @@
 `;
   }
  
+  var lastSentMsg={type:null,lbl:null};
   function sendDev(type){
     const isPage=type==='page';
     const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
+    lastSentMsg={type,lbl};
     const col=isPage?'#EF9F27':'#63cc47';
     const r1txt=isPage?'Calling you right away':"I'm OK";
     state.pending={type,from:state.user};
@@ -264,9 +265,10 @@
     if(dlogEntry&&dlogEntry.pending){
       dlogEntry.reply=msg; dlogEntry.pending=false;
     }
-    const label=msgtype||'message';
+    const label=msgtype||lastSentMsg.lbl||'message';
     addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${label}`);
     state.pending=null;
+    lastSentMsg={type:null,lbl:null};
     update(ref(db,'messages/pending'), {replied:true, reply:msg});
     showDevIdle(); renderDlog();
   }
@@ -578,9 +580,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .exit-yes{background:#A32D2D;color:white;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;margin-right:6px}
 .exit-no{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
  
- 
- 
-.bldgs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);gap:1rem;margin-bottom:1rem}
+.bldgs{display:grid;grid-template-columns:minmax(0,0.7fr) minmax(0,0.8fr) minmax(0,0.9fr) minmax(0,1.6fr) minmax(0,1.3fr);gap:0.7rem;margin-bottom:1rem}
 .bld{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
 @media(prefers-color-scheme:dark){.bld{background:#242424;border-color:#333}}
 .bh{padding:9px 12px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
@@ -603,7 +603,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .fl-name{font-size:11px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fl-desc{font-size:10px;color:#888}
 .wdot{width:10px;height:10px;border-radius:50%;background:#185FA5;animation:blink 1.5s infinite}
- 
  
 .bottom-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1rem;margin-bottom:1rem}
 .panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
@@ -777,8 +776,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="exit-no" id="btnCancelExit">Cancel</button>
   </div>
  
- 
- 
   <div class="bssid-panel" id="bssidPanel" style="display:none">
     <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#EAF3DE;border:1px solid #3B6D11;border-radius:8px;margin-bottom:1rem">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B6D11" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="#3B6D11"/></svg>
@@ -791,8 +788,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
  
   <div class="bldgs" id="bldgs"></div>
- 
- 
  
   <div class="bottom-grid">
     <div class="panel">
