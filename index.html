@@ -1,6 +1,3 @@
-Operator tracker · HTML
-Copy
-
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
@@ -41,7 +38,7 @@ Copy
       {id:'GEN', name:'Generator Floor', desc:'Generator 1 — Generator 2', cls:'mh', icon:'generator'},
       {id:'TUR', name:'Turbine Floor',   desc:'Pump-turbine units', cls:'mh', icon:'turbine'},
       {id:'MIV', name:'MIV Floor',       desc:'Main Inlet Valve', cls:'mh', icon:'valve'},
-      {id:'PIT', name:'PIT',             desc:'Lowest level', cls:'mh', icon:'pit'}
+      {id:'PIT', name:'MIV Center / PIT', desc:'Lowest level', cls:'mh', icon:'pit'}
     ],
     APH: [
       {id:'5', name:'APH 5', desc:'Upper', cls:'aph', icon:'aux'},
@@ -195,7 +192,7 @@ Copy
     if(scr) scr.innerHTML=`
       <div class="dev-idle-t">KKH Pumped Storage</div>
       <div class="dev-idle-l" id="devLoc">${loc}</div>
-      <div class="dev-idle-s" id="devSens">${pVal} hPa</div>`;
+`;
   }
  
   function sendDev(type){
@@ -234,7 +231,9 @@ Copy
   function devReply(msg){
     if(state.pending){
       state.dlog[0].reply=msg; state.dlog[0].pending=false;
-      addLog(`<b>Operator</b> replied via device: <span style="color:#3B6D11;font-weight:500">${msg}</span>`);
+      const sender=state.dlog[0].from||'viewer';
+      const msgType=state.dlog[0].type==='page'?'Immediate Attendance Required':'Are you OK?';
+      addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" to ${sender}'s message: ${msgType}`);
       state.pending=null;
       update(ref(db,'messages/pending'), {replied:true, reply:msg});
     }
@@ -267,8 +266,7 @@ Copy
         document.getElementById('sT').textContent=parseFloat(data.temp||0).toFixed(1);
         document.getElementById('sH').textContent=Math.round(data.humidity||0);
         document.getElementById('sD').textContent=data.heading||'—';
-        const ds=document.getElementById('devSens');
-        if(ds) ds.textContent=parseFloat(data.pressure).toFixed(1)+' hPa · '+parseFloat(data.temp||0).toFixed(1)+'°C';
+ 
       }
       if(data.location){
         const loc=data.location;
@@ -789,8 +787,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
             <div class="dev-scr" id="devScr">
               <div class="dev-idle-t">KKH Pumped Storage</div>
               <div class="dev-idle-l" id="devLoc">No location set</div>
-              <div class="dev-idle-s" id="devSens">— hPa</div>
-            </div>
+                    </div>
             <div class="dev-bot"><div class="dev-dot"></div><div class="dev-dot"></div><div class="dev-dot"></div></div>
           </div>
           <div class="dev-right">
