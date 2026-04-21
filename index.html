@@ -1,3 +1,6 @@
+Operator tracker · HTML
+Copy
+
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
@@ -54,13 +57,6 @@
     {key:'MH',  label:'Machine Hall',      badge:'MH',  bc:'bb-mh'},
     {key:'APH', label:'Auxiliaries P.H.',  badge:'APH', bc:'bb-aph'}
   ];
-  const ELEV_H   = {TUN:[58], TFH:[58,40], MH:[70,58,48,38,28], APH:[70,58,48,38,28]};
-  const ELEV_COLS = [
-    {key:'TUN',label:'MAT',cls:'tun'},
-    {key:'TFH',label:'TFH',cls:'tfh'},
-    {key:'MH', label:'Machine Hall',cls:'mh'},
-    {key:'APH',label:'APH',cls:'aph'}
-  ];
  
   const ICONS = {
     tunnel:      '<path d="M3 20 Q3 8 12 6 Q21 8 21 20"/><path d="M7 20v-6a5 5 0 0 1 10 0v6"/><line x1="3" y1="20" x2="21" y2="20"/>',
@@ -99,13 +95,6 @@
     b.innerHTML=state.log.map(e=>`<div class="log-row"><div class="log-t">${e.t}</div><div class="log-x">${e.h}</div></div>`).join('');
   }
  
-  function setGas(wid,vid,sid,val,st,cls){
-    const w=document.getElementById(wid);
-    if(!w) return;
-    w.className='gi'+(cls?' '+cls:'');
-    document.getElementById(vid).textContent=val;
-    document.getElementById(sid).textContent=st;
-  }
  
   function updateHero(){
     const fe=document.getElementById('heroFloor');
@@ -153,7 +142,6 @@
     state.floor={bld, fid, bldName:bname, floorName:fname, cls};
     updateHero();
     renderBuildings();
-    renderElev();
     const devLoc=document.getElementById('devLoc');
     if(devLoc) devLoc.textContent=fname+' / '+bname;
     addLog(`<b>Operator location updated:</b> ${bname} — <b>${fname}</b>`);
@@ -162,21 +150,6 @@
     set(ref(db,'operator/lastSeen'), now());
   }
  
-  function renderElev(){
-    let html='';
-    for(const col of ELEV_COLS){
-      const floors=FLOORS[col.key];
-      const heights=ELEV_H[col.key];
-      html+=`<div class="ecol"><div class="ecol-title">${col.label}</div>`;
-      floors.forEach((f,i)=>{
-        const occ=(state.floor&&state.floor.bld===col.key&&state.floor.fid===f.id);
-        html+=`<div class="eblk ${col.cls}${occ?' occ':''}" style="height:${heights[i]}px"><span>${f.name}</span></div>`;
-      });
-      html+='</div>';
-    }
-    const eb=document.getElementById('elevBody');
-    if(eb) eb.innerHTML=html;
-  }
  
   function renderViewers(){
     const on=state.viewers.filter(v=>v.online);
@@ -276,7 +249,7 @@
     document.getElementById('btnSOS').classList.remove('active');
     document.getElementById('btnSOS').textContent='SOS';
     document.getElementById('exitConfirm').classList.remove('show');
-    updateHero(); renderBuildings(); renderElev(); renderDlog(); renderLog(); showDevIdle();
+    updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
     document.getElementById('tsDisp').textContent=now();
     set(ref(db,'operator/location'), null);
     set(ref(db,'operator/sos'), false);
@@ -297,19 +270,21 @@
         const ds=document.getElementById('devSens');
         if(ds) ds.textContent=parseFloat(data.pressure).toFixed(1)+' hPa · '+parseFloat(data.temp||0).toFixed(1)+'°C';
       }
-      if(data.gases){
-        const g=data.gases;
-        setGas('gVOC','gVOCv','gVOCs',g.voc+' ppm',g.voc>80?'High!':g.voc>50?'Caution':'Normal',g.voc>80?'danger':g.voc>50?'warn':'');
-        setGas('gCO2','gCO2v','gCO2s',g.co2+' ppm',g.co2>1000?'High':g.co2>700?'Above normal':'Normal',g.co2>1000?'danger':g.co2>700?'warn':'');
-        setGas('gIAQ','gIAQv','gIAQs',g.iaq,g.iaq>150?'Poor':g.iaq>100?'Moderate':'Good',g.iaq>150?'danger':g.iaq>100?'warn':'');
-        setGas('gH2S','gH2Sv','gH2Ss',g.h2s+' ppb',g.h2s>3?'Danger!':g.h2s>1?'Caution':'Normal',g.h2s>3?'danger':g.h2s>1?'warn':'');
-      }
       if(data.location){
         const loc=data.location;
         state.floor={bld:loc.bld, fid:loc.fid, bldName:loc.bldName, floorName:loc.floorName, cls:loc.cls};
-        updateHero(); renderBuildings(); renderElev();
+        updateHero(); renderBuildings();
         const devLoc=document.getElementById('devLoc');
         if(devLoc) devLoc.textContent=loc.floorName+' / '+loc.bldName;
+        const wi=document.getElementById('wifiIndicator');
+        if(wi) wi.style.display='inline';
+        const bb=document.getElementById('heroBSSID');
+        if(bb&&loc.bssid){bb.textContent='AP: '+loc.bssid;bb.style.display='block';}
+        if(loc.bssid){
+          document.getElementById('bssidPanel').style.display='block';
+          document.getElementById('bssidText').textContent='BSSID: '+loc.bssid+(loc.ssid?' ('+loc.ssid+')':'');
+          document.getElementById('bssidSignal').textContent=loc.rssi?loc.rssi+' dBm':'—';
+        }
       }
       if(data.sos===true&&!state.sos){
         state.sos=true;
@@ -320,6 +295,18 @@
         addLog(`<b style="color:#A32D2D">SOS activated!</b>${state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''}`);
       }
       document.getElementById('tsDisp').textContent=now();
+    });
+ 
+    onValue(ref(db,'operator/fall'), snap=>{
+      const data=snap.val();
+      if(!data||!data.detected) return;
+      const fallEl=document.getElementById('fallAlert');
+      const fallText=document.getElementById('fallText');
+      if(fallEl&&!fallEl.classList.contains('show')){
+        fallEl.classList.add('show');
+        if(fallText) fallText.textContent='Fall detected at '+data.time+(state.floor?' — '+state.floor.floorName+' / '+state.floor.bldName:'');
+        addLog('<b style="color:#A32D2D">⚠ Fall detected!</b>'+(state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''));
+      }
     });
  
     onValue(ref(db,'messages/pending'), snap=>{
@@ -381,7 +368,7 @@
     document.getElementById('pgLogin').style.display='none';
     document.getElementById('pgApp').style.display='block';
     addLog(`<b>${u}</b> connected as viewer${admin?' <span style="color:#185FA5">[Admin]</span>':''}`);
-    renderBuildings(); renderElev(); renderViewers(); listenFirebase();
+    renderBuildings(); renderViewers(); listenFirebase();
   }
  
   function doLogin(){
@@ -439,7 +426,7 @@
   }
  
   window.addEventListener('DOMContentLoaded', ()=>{
-    renderElev(); renderDlog();
+    renderDlog();
  
     document.getElementById('btnLogin').addEventListener('click', doLogin);
     document.getElementById('inPass').addEventListener('keydown', e=>{if(e.key==='Enter')doLogin();});
@@ -485,6 +472,11 @@
     document.getElementById('btnPage').addEventListener('click', ()=>sendDev('page'));
     document.getElementById('btnAYOK').addEventListener('click', ()=>sendDev('ayok'));
     document.getElementById('btnClearLog').addEventListener('click', ()=>{state.log=[];renderLog();});
+    document.getElementById('btnClearFall').addEventListener('click', ()=>{
+      document.getElementById('fallAlert').classList.remove('show');
+      set(ref(db,'operator/fall'), {detected:false,time:null});
+      addLog('Fall alert cleared');
+    });
  
     setInterval(()=>{if(state.user) document.getElementById('tsDisp').textContent=now();}, 1000);
  
@@ -557,23 +549,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sos-alert.show{display:flex}
 .sos-alert-text{flex:1;font-size:13px;font-weight:500;color:#501313}
 .sos-clear{background:none;border:1px solid #A32D2D;color:#A32D2D;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.fall-alert{display:none;align-items:center;gap:12px;background:#FCEBEB;border:2px solid #A32D2D;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
+.fall-alert.show{display:flex}
+.fall-alert-text{font-size:11px;color:#791F1F;margin-top:2px}
 .exit-confirm{display:none;align-items:center;gap:12px;background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
 .exit-confirm.show{display:flex}
 .exit-confirm-text{flex:1;font-size:13px;color:#633806}
 .exit-yes{background:#A32D2D;color:white;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;margin-right:6px}
 .exit-no{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
  
-.gas-bar{display:flex;gap:8px;margin-bottom:1rem}
-.gi{flex:1;background:#f5f5f5;border-radius:8px;padding:8px 10px;border:0.5px solid #e0e0e0}
-@media(prefers-color-scheme:dark){.gi{background:#2a2a2a;border-color:#333}}
-.gi.warn{background:#FAEEDA;border-color:#EF9F27}
-.gi.danger{background:#FCEBEB;border-color:#E24B4A}
-.gl{font-size:10px;color:#888;margin-bottom:3px}
-.gi.warn .gl{color:#854F0B}.gi.danger .gl{color:#A32D2D}
-.gv{font-size:13px;font-weight:500}
-.gi.warn .gv{color:#633806}.gi.danger .gv{color:#791F1F}
-.gs{font-size:10px;margin-top:1px;color:#888}
-.gi.warn .gs{color:#854F0B}.gi.danger .gs{color:#A32D2D}
+ 
  
 .bldgs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.4fr);gap:1rem;margin-bottom:1rem}
 .bld{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
@@ -599,17 +584,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .fl-desc{font-size:10px;color:#888}
 .wdot{width:10px;height:10px;border-radius:50%;background:#185FA5;animation:blink 1.5s infinite}
  
-.elev{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden;margin-bottom:1rem}
-@media(prefers-color-scheme:dark){.elev{background:#242424;border-color:#333}}
-.elev-hdr{padding:9px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
-@media(prefers-color-scheme:dark){.elev-hdr{background:#2a2a2a;border-color:#333}}
-.elev-title{font-size:12px;font-weight:500}
-.elev-body{padding:1rem;display:flex;gap:8px;align-items:flex-end}
-.ecol{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
-.ecol-title{font-size:10px;font-weight:500;color:#888;margin-bottom:3px;text-align:center}
-.eblk{width:100%;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:500}
-.eblk.mh{background:#E6F1FB;color:#0C447C}.eblk.tfh{background:#EAF3DE;color:#27500A}.eblk.aph{background:#EEEDFE;color:#3C3489}.eblk.tun{background:#F1EFE8;color:#444441}
-.eblk.occ.mh{background:#B5D4F4;outline:2px solid #185FA5}.eblk.occ.tfh{background:#C0DD97;outline:2px solid #3B6D11}.eblk.occ.aph{background:#CECBF6;outline:2px solid #534AB7}.eblk.occ.tun{background:#D3D1C7;outline:2px solid #888780}
  
 .bottom-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1rem;margin-bottom:1rem}
 .panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
@@ -741,9 +715,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="hero">
     <div class="hero-icon"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
     <div>
-      <div class="hero-label">Operator current location</div>
+      <div class="hero-label" style="display:flex;align-items:center;gap:6px">
+        Operator current location
+        <span id="wifiIndicator" style="display:none;font-size:10px;background:#EAF3DE;color:#27500A;padding:1px 7px;border-radius:10px">WiFi located</span>
+      </div>
       <div id="heroFloor" class="hero-floor none">No location detected — awaiting device data</div>
       <div id="heroBld" class="hero-bld" style="display:none"></div>
+      <div id="heroBSSID" style="font-size:10px;color:#aaa;margin-top:2px;display:none"></div>
     </div>
     <div class="hero-right">
       <div class="sens-row">
@@ -766,25 +744,40 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="sos-alert-text" id="sosText">Distress alert!</div>
     <button class="sos-clear" id="btnClearSOS">Clear</button>
   </div>
+  <div class="fall-alert" id="fallAlert">
+    <div style="display:flex;align-items:center;gap:10px;flex:1">
+      <div style="width:36px;height:36px;border-radius:50%;background:#A32D2D;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:sosf 0.6s infinite">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:500;color:#501313">Fall detected!</div>
+        <div class="fall-alert-text" id="fallText">Operator may have fallen — check immediately</div>
+      </div>
+    </div>
+    <button class="sos-clear" id="btnClearFall">Clear</button>
+  </div>
   <div class="exit-confirm" id="exitConfirm">
     <div class="exit-confirm-text">Confirm tunnel exit? Map and event log will be cleared automatically.</div>
     <button class="exit-yes" id="btnConfirmExit">Confirm exit</button>
     <button class="exit-no" id="btnCancelExit">Cancel</button>
   </div>
  
-  <div class="gas-bar">
-    <div class="gi" id="gVOC"><div class="gl">VOC</div><div class="gv" id="gVOCv">—</div><div class="gs" id="gVOCs">Waiting</div></div>
-    <div class="gi" id="gCO2"><div class="gl">CO₂ ppm</div><div class="gv" id="gCO2v">—</div><div class="gs" id="gCO2s">Waiting</div></div>
-    <div class="gi" id="gIAQ"><div class="gl">IAQ</div><div class="gv" id="gIAQv">—</div><div class="gs" id="gIAQs">Waiting</div></div>
-    <div class="gi" id="gH2S"><div class="gl">H₂S ppb</div><div class="gv" id="gH2Sv">—</div><div class="gs" id="gH2Ss">Waiting</div></div>
+ 
+ 
+  <div class="bssid-panel" id="bssidPanel" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#EAF3DE;border:1px solid #3B6D11;border-radius:8px;margin-bottom:1rem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B6D11" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="#3B6D11"/></svg>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:500;color:#27500A">Located via WiFi</div>
+        <div style="font-size:10px;color:#3B6D11;margin-top:1px" id="bssidText">—</div>
+      </div>
+      <div style="font-size:10px;color:#3B6D11;background:white;padding:2px 8px;border-radius:10px;border:0.5px solid #3B6D11" id="bssidSignal">—</div>
+    </div>
   </div>
  
   <div class="bldgs" id="bldgs"></div>
  
-  <div class="elev">
-    <div class="elev-hdr"><div class="elev-title">Elevation cross-section — all structures</div><div class="upd">Higher = upper floor</div></div>
-    <div class="elev-body" id="elevBody"></div>
-  </div>
+ 
  
   <div class="bottom-grid">
     <div class="panel">
@@ -792,7 +785,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="pb">
         <div class="dev-row">
           <div class="dev-frame">
-            <div class="dev-top"><div class="dev-brand">M5STACK S3</div><div class="dev-batt"><div class="dev-batt-fill"></div></div></div>
+            <div class="dev-top"><div class="dev-brand">OPERATOR TRACKER</div><div class="dev-batt"><div class="dev-batt-fill"></div></div></div>
             <div class="dev-scr" id="devScr">
               <div class="dev-idle-t">KKH Pumped Storage</div>
               <div class="dev-idle-l" id="devLoc">No location set</div>
@@ -834,3 +827,4 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
  
 </body>
 </html>
+ 
