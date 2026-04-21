@@ -216,68 +216,60 @@
 `;
   }
  
-  var lastSentMsg={type:null,lbl:null};
-  var activeDlogEntry=null;
+  var currentMsgType='';
+  var currentMsgLbl='';
+ 
+  window.devReplyGlobal = function(msg){
+    // Update dlog entry
+    for(var i=0;i<state.dlog.length;i++){
+      if(state.dlog[i].pending){
+        state.dlog[i].reply=msg;
+        state.dlog[i].pending=false;
+        break;
+      }
+    }
+    // Log it
+    addLog('<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">'+msg+'</span>" — '+currentMsgLbl);
+    // Update Firebase
+    update(ref(db,'messages/pending'), {replied:true, reply:msg});
+    state.pending=null;
+    showDevIdle();
+    renderDlog();
+  };
+ 
   function sendDev(type){
     const isPage=type==='page';
     const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
-    lastSentMsg={type,lbl};
+    currentMsgType=type;
+    currentMsgLbl=lbl;
     const col=isPage?'#EF9F27':'#63cc47';
     const r1txt=isPage?'Calling you right away':"I'm OK";
     state.pending={type,from:state.user};
-    const entry={type,from:state.user,time:now(),reply:null,pending:true};
-    activeDlogEntry=entry;
-    state.dlog.unshift(entry);
+    // Add to dlog
+    for(var i=0;i<state.dlog.length;i++){state.dlog[i].pending=false;}
+    state.dlog.unshift({type:type,from:state.user,time:now(),reply:null,pending:true});
     if(state.dlog.length>8) state.dlog.pop();
-    addLog(`<b>${state.user}</b> sent <span style="color:${col};font-weight:500">${lbl}</span> → device`);
+    addLog('<b>'+state.user+'</b> sent <span style="color:'+col+';font-weight:500">'+lbl+'</span> → device');
     const iconSvg=isPage
       ?'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
       :'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
-    const scr=document.getElementById('devScr');
-    if(scr) scr.innerHTML=`
-      <div class="dev-msg-w">
-        <div class="dev-ring ${type}">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${isPage?'#EF9F27':'#63cc47'}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
-        </div>
-        <div class="dev-from">From: ${state.user}</div>
-        <div class="dev-msg ${type}">${lbl}</div>
-        <div class="dev-ts">${now()}</div>
-        <div class="dev-sep"></div>
-        <div class="dev-rl">Operator reply:</div>
-        <div class="dev-rbtns">
-          <button class="dev-rbtn${isPage?' urg':''}" id="devR1" data-reply="${r1txt}" data-msgtype="${lbl}">${r1txt}</button>
-          <button class="dev-dis" id="devR2" data-reply="Dismiss" data-msgtype="${lbl}">Dismiss</button>
-        </div>
-      </div>`;
-    document.getElementById('devR1').addEventListener('click', function(){
-      const reply=this.getAttribute('data-reply');
-      const msgtype=this.getAttribute('data-msgtype');
-      devReply(reply, msgtype);
-    });
-    document.getElementById('devR2').addEventListener('click', function(){
-      const reply=this.getAttribute('data-reply');
-      const msgtype=this.getAttribute('data-msgtype');
-      devReply(reply, msgtype);
-    });
-    set(ref(db,'messages/pending'), {type, from:state.user, time:now(), replied:false});
+    var scr=document.getElementById('devScr');
+    if(scr) scr.innerHTML=
+      '<div class="dev-msg-w">'
+      +'<div class="dev-ring '+type+'">'
+      +'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="'+(isPage?'#EF9F27':'#63cc47')+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'+iconSvg+'</svg>'
+      +'</div>'
+      +'<div class="dev-from">From: '+state.user+'</div>'
+      +'<div class="dev-msg '+type+'">'+lbl+'</div>'
+      +'<div class="dev-ts">'+now()+'</div>'
+      +'<div class="dev-sep"></div>'
+      +'<div class="dev-rl">Operator reply:</div>'
+      +'<div class="dev-rbtns">'
+      +'<button class="dev-rbtn'+(isPage?' urg':'')+'" onclick="devReplyGlobal(''+r1txt+'')">'+r1txt+'</button>'
+      +'<button class="dev-dis" onclick="devReplyGlobal('Dismiss')">Dismiss</button>'
+      +'</div></div>';
+    set(ref(db,'messages/pending'), {type:type, from:state.user, time:now(), replied:false});
     renderDlog();
-  }
- 
-  function devReply(msg, msgtype){
-    if(activeDlogEntry){
-      activeDlogEntry.reply=msg;
-      activeDlogEntry.pending=false;
-      activeDlogEntry=null;
-    } else if(state.dlog.length>0&&state.dlog[0].pending){
-      state.dlog[0].reply=msg;
-      state.dlog[0].pending=false;
-    }
-    const label=msgtype||lastSentMsg.lbl||'message';
-    addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${label}`);
-    state.pending=null;
-    lastSentMsg={type:null,lbl:null};
-    update(ref(db,'messages/pending'), {replied:true, reply:msg});
-    showDevIdle(); renderDlog();
   }
  
   function doExit(){
@@ -345,7 +337,27 @@
  
     onValue(ref(db,'messages/pending'), snap=>{
       const msg=snap.val();
-      if(!msg||msg.replied) return;
+      if(!msg) return;
+      // If replied externally (from watch), update our local dlog and log
+      if(msg.replied&&msg.reply){
+        var found=false;
+        for(var i=0;i<state.dlog.length;i++){
+          if(state.dlog[i].pending){
+            state.dlog[i].reply=msg.reply;
+            state.dlog[i].pending=false;
+            found=true;
+            break;
+          }
+        }
+        if(found){
+          addLog('<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">'+msg.reply+'</span>" — '+(currentMsgLbl||'message'));
+          state.pending=null;
+          showDevIdle();
+          renderDlog();
+        }
+        return;
+      }
+      if(msg.replied) return;
       const isPage=msg.type==='page';
       const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
       const col=isPage?'#EF9F27':'#63cc47';
