@@ -186,11 +186,9 @@
  
   function showDevIdle(){
     const loc=state.floor?state.floor.floorName+' / '+state.floor.bldName:'No location set';
-    const p=document.getElementById('sP');
-    const pVal=p?p.textContent:'—';
     const scr=document.getElementById('devScr');
     if(scr) scr.innerHTML=`
-      <div class="dev-idle-t">KKH Pumped Storage</div>
+      <div class="dev-idle-t">OPERATOR TRACKER</div>
       <div class="dev-idle-l" id="devLoc">${loc}</div>
 `;
   }
@@ -229,11 +227,14 @@
   }
  
   function devReply(msg){
+    const dlogEntry=state.dlog.length>0?state.dlog[0]:null;
+    if(dlogEntry&&dlogEntry.pending){
+      dlogEntry.reply=msg; dlogEntry.pending=false;
+    }
+    const sender=dlogEntry?dlogEntry.from:'viewer';
+    const msgType=dlogEntry&&dlogEntry.type==='page'?'Immediate Attendance Required':'Are you OK?';
+    addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" — ${msgType}`);
     if(state.pending){
-      state.dlog[0].reply=msg; state.dlog[0].pending=false;
-      const sender=state.dlog[0].from||'viewer';
-      const msgType=state.dlog[0].type==='page'?'Immediate Attendance Required':'Are you OK?';
-      addLog(`<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">${msg}</span>" to ${sender}'s message: ${msgType}`);
       state.pending=null;
       update(ref(db,'messages/pending'), {replied:true, reply:msg});
     }
@@ -262,10 +263,6 @@
       if(!data) return;
       state.operatorData=data;
       if(data.pressure){
-        document.getElementById('sP').textContent=parseFloat(data.pressure).toFixed(1);
-        document.getElementById('sT').textContent=parseFloat(data.temp||0).toFixed(1);
-        document.getElementById('sH').textContent=Math.round(data.humidity||0);
-        document.getElementById('sD').textContent=data.heading||'—';
  
       }
       if(data.location){
@@ -531,11 +528,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hero-floor.none{font-size:15px;color:#aaa;font-weight:400}
 .hero-bld{font-size:12px;color:#888;margin-top:3px}
 .hero-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.sens-row{display:flex;gap:8px}
-.sens{text-align:center;background:#f5f5f5;border-radius:6px;padding:5px 10px}
-@media(prefers-color-scheme:dark){.sens{background:#2a2a2a}}
-.sv{font-size:14px;font-weight:500}
-.sl{font-size:9px;color:#999;margin-top:1px}
 .act-btns{display:flex;gap:8px}
 .exit-btn{background:none;border:1px solid #ccc;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
 .exit-btn svg{width:13px;height:13px}
@@ -722,12 +714,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="heroBSSID" style="font-size:10px;color:#aaa;margin-top:2px;display:none"></div>
     </div>
     <div class="hero-right">
-      <div class="sens-row">
-        <div class="sens"><div class="sv" id="sP">—</div><div class="sl">hPa</div></div>
-        <div class="sens"><div class="sv" id="sT">—</div><div class="sl">°C</div></div>
-        <div class="sens"><div class="sv" id="sH">—</div><div class="sl">Hum%</div></div>
-        <div class="sens"><div class="sv" id="sD">—</div><div class="sl">Dir</div></div>
-      </div>
+ 
       <div class="act-btns">
         <button class="exit-btn" id="btnExit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
