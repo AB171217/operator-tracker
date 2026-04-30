@@ -1,834 +1,1170 @@
-<!DOCTYPE html>
-<html lang="en" dir="ltr">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Operator Tracker — KKH Pumped Storage</title>
- 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-  import { getAuth, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
- 
-  const firebaseConfig = {
-    apiKey: "AIzaSyAAQ8z2juAPIbg1hS3_SnMjl8NrEr0MMIU",
-    authDomain: "operator-tracker.firebaseapp.com",
-    projectId: "operator-tracker",
-    databaseURL: "https://operator-tracker-default-rtdb.europe-west1.firebasedatabase.app",
-    storageBucket: "operator-tracker.firebasestorage.app",
-    messagingSenderId: "926321195085",
-    appId: "1:926321195085:web:e79dec6d3c16af4fc60404"
-  };
- 
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
- 
-  const ADMIN_NAME = "Ali Bzadug";
-  const ADMIN_PASS = "AB17pro$";
-  const USER_PASS  = "AB17$";
- 
-  const FLOORS = {
-    CTR: [{id:'CTR', name:'Control Room', desc:'Surface — router anchor', cls:'ctr', icon:'control'}],
-    TUN: [{id:'ENT', name:'Main Access Tunnel', desc:'Entry point — MAT', cls:'tun', icon:'tunnel'}],
-    TFH: [
-      {id:'2', name:'TFH 2', desc:'Upper', cls:'tfh', icon:'transformer'},
-      {id:'1', name:'TFH 1', desc:'Lower', cls:'tfh', icon:'transformer'}
-    ],
-    MH: [
-      {id:'OP',  name:'Operation Floor', desc:'Control room', cls:'mh', icon:'control'},
-      {id:'GEN', name:'Generator Floor', desc:'Generator 1 — Generator 2', cls:'mh', icon:'generator'},
-      {id:'TUR', name:'Turbine Floor',   desc:'Pump-turbine units', cls:'mh', icon:'turbine'},
-      {id:'MIV', name:'MIV Floor',       desc:'Main Inlet Valve', cls:'mh', icon:'valve'},
-      {id:'PIT', name:'MIV Center / PIT', desc:'Lowest level', cls:'mh', icon:'pit'}
-    ],
-    APH: [
-      {id:'5', name:'APH 5', desc:'Upper', cls:'aph', icon:'aux'},
-      {id:'4', name:'APH 4', desc:'', cls:'aph', icon:'aux'},
-      {id:'3', name:'APH 3', desc:'', cls:'aph', icon:'aux'},
-      {id:'2', name:'APH 2', desc:'', cls:'aph', icon:'aux'},
-      {id:'1', name:'APH 1', desc:'Lower', cls:'aph', icon:'aux'}
-    ]
-  };
-  const BLDS = [
-    {key:'CTR', label:'Control Room',      badge:'CTR', bc:'bb-ctr'},
-    {key:'TUN', label:'MAT Tunnel',        badge:'MAT', bc:'bb-tun'},
-    {key:'TFH', label:'Transformer Hall',  badge:'TFH', bc:'bb-tfh'},
-    {key:'MH',  label:'Machine Hall',      badge:'MH',  bc:'bb-mh'},
-    {key:'APH', label:'Auxiliaries P.H.',  badge:'APH', bc:'bb-aph'}
-  ];
- 
-  const ICONS = {
-    tunnel:      '<path d="M3 20 Q3 8 12 6 Q21 8 21 20"/><path d="M7 20v-6a5 5 0 0 1 10 0v6"/><line x1="3" y1="20" x2="21" y2="20"/>',
-    transformer: '<rect x="4" y="5" width="6" height="14" rx="1"/><rect x="14" y="5" width="6" height="14" rx="1"/><path d="M10 9h4M10 12h4M10 15h4"/>',
-    control:     '<rect x="3" y="4" width="18" height="12" rx="2"/><circle cx="8" cy="10" r="2"/><circle cx="14" cy="10" r="1.2"/><path d="M18 8v4M3 18h18"/>',
-    generator:   '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M5.64 5.64l2.12 2.12M16.24 16.24l2.12 2.12M5.64 18.36l2.12-2.12M16.24 7.76l2.12-2.12"/>',
-    turbine:     '<circle cx="12" cy="12" r="3"/><path d="M12 9 C14 6 18 5 18 9 C18 11 15 11 12 12"/><path d="M12 15 C10 18 6 19 6 15 C6 13 9 13 12 12"/>',
-    valve:       '<circle cx="12" cy="12" r="4"/><line x1="2" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="22" y2="12"/><line x1="12" y1="6" x2="12" y2="4"/><path d="M10 10 L14 14 M14 10 L10 14"/>',
-    pit:         '<path d="M4 6 L12 18 L20 6"/><path d="M8 6 L12 12 L16 6"/><line x1="4" y1="6" x2="20" y2="6"/>',
-    aux:         '<rect x="3" y="9" width="18" height="11" rx="1"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/><circle cx="12" cy="14" r="2"/>'
-  };
- 
-  let state = {
-    user: null, admin: false,
-    floor: null,
-    sos: false,
-    log: [], dlog: [],
-    pending: null,
-    viewers: [],
-    operatorData: null
-  };
- 
-  function pad(n){return String(n).padStart(2,'0');}
-  function now(){var d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
-  function ini(n){return n.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,3);}
- 
-  function addLog(html){
-    state.log.unshift({t:now(),h:html});
-    if(state.log.length>60) state.log.pop();
-    renderLog();
-  }
-  function renderLog(){
-    const b=document.getElementById('logBody');
-    if(!b) return;
-    if(state.log.length===0){b.innerHTML='';return;}
-    b.innerHTML=state.log.map(e=>`<div class="log-row"><div class="log-t">${e.t}</div><div class="log-x">${e.h}</div></div>`).join('');
-  }
- 
-  function updateHero(){
-    const fe=document.getElementById('heroFloor');
-    const be=document.getElementById('heroBld');
-    if(!fe) return;
-    if(!state.floor){
-      fe.textContent='No location detected — awaiting device data';
-      fe.className='hero-floor none';
-      be.style.display='none';
+// ============================================================
+// Operator Tracker Watch — LVGL Edition
+// ESP32-C6 + CO5300 AMOLED + FT3168 Touch + QMI8658 IMU
+// ============================================================
+#include <Wire.h>
+#include <Arduino.h>
+#include "pin_config.h"
+#include <lvgl.h>
+#include "Arduino_GFX_Library.h"
+#include "Arduino_DriveBus_Library.h"
+#include "lv_conf.h"
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <driver/i2s_std.h>
+#include "HWCDC.h"
+HWCDC USBSerial;
+
+// ============================================================
+// Display + Touch (exact same as demo)
+// ============================================================
+uint32_t screenWidth, screenHeight, bufSize;
+lv_display_t *disp;
+lv_color_t *disp_draw_buf;
+
+Arduino_DataBus *bus = new Arduino_ESP32QSPI(
+  LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
+
+Arduino_GFX *gfx = new Arduino_CO5300(bus, LCD_RESET, 0,
+  LCD_WIDTH, LCD_HEIGHT, 22, 0, 0, 0);
+
+std::shared_ptr<Arduino_IIC_DriveBus> IIC_Bus =
+  std::make_shared<Arduino_HWIIC>(IIC_SDA, IIC_SCL, &Wire);
+
+void Arduino_IIC_Touch_Interrupt(void);
+std::unique_ptr<Arduino_IIC> FT3168(new Arduino_FT3x68(
+  IIC_Bus, FT3168_DEVICE_ADDRESS,
+  DRIVEBUS_DEFAULT_VALUE, TP_INT, Arduino_IIC_Touch_Interrupt));
+void Arduino_IIC_Touch_Interrupt(void) { FT3168->IIC_Interrupt_Flag = true; }
+
+// ============================================================
+// Hardware Pins
+// ============================================================
+#define BTN_BOOT   9
+#define BTN_PWR    18
+#define AXP_ADDR   0x34
+#define IMU_ADDR   0x6B
+#define ES8311_ADDR 0x18
+#define PA_CTRL    6
+#define I2S_MCLK   19
+#define I2S_SCLK   20
+#define I2S_LRCK   22
+#define I2S_DSDIN  23
+
+// ============================================================
+// WiFi & Firebase
+// ============================================================
+struct WNet { const char* ssid; const char* pass; bool tunnel; };
+WNet nets[] = {
+  {"Tunnel_SPS",  "",          true},
+  {"ControlRoom", "B@8i7u6y",  false},
+};
+const int NNET = 2;
+const char* FB = "https://operator-tracker-default-rtdb.europe-west1.firebasedatabase.app";
+
+// ============================================================
+// BSSID Table
+// ============================================================
+struct BEntry { const char* mac; const char* bld; const char* fid; const char* bn; const char* fn; };
+BEntry bmap[] = {
+  {"C8:A6:08:A5:93:E0","TUN","ENT","MAT Tunnel",        "Main Access Tunnel"},
+  {"5C:83:6C:A7:6F:D0","TFH","1",  "Transformer Hall",  "TFH 1"},
+  {"00:33:58:88:FA:90","TFH","2",  "Transformer Hall",  "TFH 2"},
+  {"78:9F:6A:85:3E:40","MH", "OP", "Machine Hall",      "Operation Floor"},
+  {"C8:A6:08:A2:CB:50","MH", "OP", "Machine Hall",      "Operation Floor"},
+  {"C8:A6:08:A2:BF:D0","MH", "OP", "Machine Hall",      "Operation Floor"},
+  {"C8:A6:08:A5:AA:40","MH", "OP", "Machine Hall",      "Operation Floor"},
+  {"5C:83:6C:61:86:20","MH", "GEN","Machine Hall",      "Generator Floor"},
+  {"5C:83:6C:A1:0A:30","MH", "GEN","Machine Hall",      "Generator Floor"},
+  {"5C:83:6C:A1:99:A0","MH", "GEN","Machine Hall",      "Generator Floor"},
+  {"5C:83:6C:A1:9C:90","MH", "TUR","Machine Hall",      "Turbine Floor"},
+  {"5C:83:6C:A1:98:B0","MH", "TUR","Machine Hall",      "Turbine Floor"},
+  {"5C:83:6C:A1:86:90","MH", "TUR","Machine Hall",      "Turbine Floor"},
+  {"5C:83:6C:A1:CE:30","MH", "TUR","Machine Hall",      "Turbine Floor"},
+  {"C8:A6:08:A5:CA:20","MH", "MIV","Machine Hall",      "MIV Floor"},
+  {"5C:83:6C:A1:3C:A0","MH", "MIV","Machine Hall",      "MIV Floor"},
+  {"C8:A6:08:A5:A8:70","MH", "PIT","Machine Hall",      "MIV Center / PIT"},
+  {"00:33:58:49:DC:90","APH","1",  "Auxiliaries P.H.", "APH 1"},
+  {"C8:A6:08:A5:9A:E0","APH","2",  "Auxiliaries P.H.", "APH 2"},
+  {"78:9F:6A:85:C0:80","APH","3",  "Auxiliaries P.H.", "APH 3"},
+  {"78:9F:6A:45:41:40","APH","4",  "Auxiliaries P.H.", "APH 4"},
+  {"78:9F:6A:85:E8:60","APH","5",  "Auxiliaries P.H.", "APH 5"},
+  {"A0:A3:F0:6A:6A:56","CTR","CTR","Control Room",      "Control Room"},
+};
+const int BMAP_N = 23;
+
+// ============================================================
+// App State
+// ============================================================
+String curFloor="", curBld="", curFid="", curBldName="", curSSID="";
+bool   sosActive=false, inTunnel=false;
+int    battPct=0;
+bool   isCharging=false;
+
+struct PMesg {
+  bool   active;
+  bool   needBeep;
+  String type, from, r1, text;
+  String lastShownKey; // מונע הצגה כפולה
+};
+PMesg pm = {false,false,"","","","",""};
+
+// IMU / Fall
+float ax=0,ay=0,az=0;
+bool  imuOK=false;
+bool  ff=false;
+unsigned long fft=0, lastFall=0;
+#define FALL_CD 20000  // cooldown בין זיהויים
+
+// Screen sleep
+unsigned long lastActivity = 0;
+bool screenOn = true;
+#define SLEEP_MS 10000
+
+// Timers
+unsigned long tLoc=0, tPoll=0, tBatt=0, tRoam=0;
+
+// ============================================================
+// LVGL UI Objects
+// ============================================================
+// Screens
+lv_obj_t *scr_splash=nullptr;
+lv_obj_t *scr_main=nullptr;
+lv_obj_t *scr_msg=nullptr;
+
+// Main screen labels
+lv_obj_t *lbl_time=nullptr;
+lv_obj_t *lbl_date=nullptr;
+lv_obj_t *lbl_floor=nullptr;
+lv_obj_t *lbl_bld=nullptr;
+lv_obj_t *lbl_bssid=nullptr;
+lv_obj_t *lbl_signal=nullptr;
+lv_obj_t *lbl_wifi=nullptr;
+lv_obj_t *lbl_batt=nullptr;
+lv_obj_t *lbl_charge=nullptr;
+lv_obj_t *bar_batt=nullptr;
+lv_obj_t *lbl_sos=nullptr;
+lv_obj_t *panel_sos=nullptr;
+
+// Message banner
+lv_obj_t *panel_msg=nullptr;
+
+// ============================================================
+// Colors
+// ============================================================
+#define CLR_BG      lv_color_hex(0x0A0A1A)
+#define CLR_CARD    lv_color_hex(0x141428)
+#define CLR_BLUE    lv_color_hex(0x1E90FF)
+#define CLR_GREEN   lv_color_hex(0x00C853)
+#define CLR_RED     lv_color_hex(0xFF1744)
+#define CLR_ORANGE  lv_color_hex(0xFF6D00)
+#define CLR_WHITE   lv_color_hex(0xFFFFFF)
+#define CLR_GRAY    lv_color_hex(0x808080)
+#define CLR_LGRAY   lv_color_hex(0xBBBBBB)
+#define CLR_YELLOW  lv_color_hex(0xFFD600)
+#define CLR_PURPLE  lv_color_hex(0xAA00FF)
+
+// ============================================================
+// LVGL Display Flush
+// ============================================================
+uint32_t millis_cb(void) { return millis(); }
+
+void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
+  uint32_t w = lv_area_get_width(area);
+  uint32_t h = lv_area_get_height(area);
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t*)px_map, w, h);
+  lv_disp_flush_ready(disp);
+}
+
+void my_touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
+  int32_t tx = FT3168->IIC_Read_Device_Value(FT3168->Arduino_IIC_Touch::Value_Information::TOUCH_COORDINATE_X);
+  int32_t ty = FT3168->IIC_Read_Device_Value(FT3168->Arduino_IIC_Touch::Value_Information::TOUCH_COORDINATE_Y);
+  if (FT3168->IIC_Interrupt_Flag) {
+    FT3168->IIC_Interrupt_Flag = false;
+    wakeScreen();
+    if(!screenOn){
+      // רק הערנו — אל תעבד את הנגיעה
+      data->state = LV_INDEV_STATE_REL;
     } else {
-      fe.textContent=state.floor.floorName;
-      fe.className='hero-floor';
-      be.textContent=state.floor.bldName;
-      be.style.display='block';
+      data->state = LV_INDEV_STATE_PR;
+      data->point.x = tx; data->point.y = ty;
     }
+  } else {
+    data->state = LV_INDEV_STATE_REL;
   }
- 
-  function renderBuildings(){
-    let html='';
-    for(const bld of BLDS){
-      const floors=FLOORS[bld.key];
-      html+=`<div class="bld"><div class="bh"><div class="bn">${bld.label}</div><div class="bb ${bld.bc}">${bld.badge}</div></div>`;
-      for(const f of floors){
-        const sel=(state.floor&&state.floor.bld===bld.key&&state.floor.fid===f.id);
-        const sc=sel?(' sel-'+f.cls):'';
-        html+=`<div class="fl-row${sc}" data-bld="${bld.key}" data-fid="${f.id}" data-bname="${bld.label}" data-fname="${f.name}" data-cls="${f.cls}">
-          <div class="fl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[f.icon]}</svg></div>
-          <div style="flex:1;min-width:0"><div class="fl-name">${f.name}</div>${f.desc?`<div class="fl-desc">${f.desc}</div>`:''}</div>
-          ${sel?'<div class="wdot"></div>':''}
-        </div>`;
-      }
-      html+='</div>';
+}
+
+void rounder_event_cb(lv_event_t *e) {
+  lv_area_t *area = (lv_area_t*)lv_event_get_param(e);
+  area->x1 = (area->x1>>1)<<1; area->y1 = (area->y1>>1)<<1;
+  area->x2 = ((area->x2>>1)<<1)+1; area->y2 = ((area->y2>>1)<<1)+1;
+}
+
+// ============================================================
+// Screen Sleep/Wake
+// ============================================================
+// LVGL overlay for screen dim (compatible with any GFX)
+static lv_obj_t *overlay_black = nullptr;
+
+void setScreenBrightness(uint8_t val){
+  if(val==0){
+    // צור overlay שחור מעל הכל
+    if(!overlay_black){
+      overlay_black=lv_obj_create(lv_layer_sys());
+      lv_obj_set_size(overlay_black,LV_PCT(100),LV_PCT(100));
+      lv_obj_set_style_bg_color(overlay_black,lv_color_black(),0);
+      lv_obj_set_style_bg_opa(overlay_black,LV_OPA_COVER,0);
+      lv_obj_clear_flag(overlay_black,LV_OBJ_FLAG_CLICKABLE);
     }
-    const bldgs=document.getElementById('bldgs');
-    if(!bldgs) return;
-    bldgs.innerHTML=html;
-    // floors are read-only - no click listeners
+    lv_obj_clear_flag(overlay_black,LV_OBJ_FLAG_HIDDEN);
+  } else {
+    // הסר overlay
+    if(overlay_black) lv_obj_add_flag(overlay_black,LV_OBJ_FLAG_HIDDEN);
   }
- 
- 
- 
-  function renderViewers(){
-    const on=state.viewers.filter(v=>v.online);
-    const off=state.viewers.filter(v=>!v.online);
-    const vc=document.getElementById('viewerCount');
-    if(vc) vc.textContent=on.length+' online';
-    const all=[...on,...off];
-    const list=document.getElementById('viewersList');
-    if(!list) return;
-    if(all.length===0){list.innerHTML='<div style="padding:8px 14px;font-size:12px;color:#888">No viewers yet.</div>';return;}
-    list.innerHTML=all.map(v=>`
-      <div class="vrow${v.online?'':' off'}">
-        <div class="vav${v.online?'':' gry'}">${ini(v.name)}</div>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:5px">
-            <div class="vname">${v.name}</div>
-            ${v.admin?'<span class="vadmin">Admin</span>':''}
-            ${v.name===state.user?'<span style="font-size:9px;color:#185FA5">(you)</span>':''}
-          </div>
-          <div class="vstatus${v.online?' on':''}">${v.online?'Online since '+v.since:'Left · '+v.left}</div>
-        </div>
-        <div class="vpip ${v.online?'on':'off'}"></div>
-      </div>`).join('');
+}
+
+void wakeScreen() {
+  lastActivity = millis();
+  if (!screenOn) {
+    screenOn = true;
+    setScreenBrightness(200);
+    updateMainUI();
   }
- 
-  function renderDlog(){
-    const b=document.getElementById('dlogBody');
-    if(!b) return;
-    if(state.dlog.length===0){b.innerHTML='<div class="dlog-empty">No messages sent yet.</div>';return;}
-    b.innerHTML=state.dlog.map(m=>{
-      let col,lbl;
-      if(m.type==='page'){col='#BA7517';lbl='Att. Required!';}
-      else if(m.type==='ayok'){col='#3B6D11';lbl='Are you OK?';}
-      else{col='#185FA5';lbl='📝 '+( m.text||'Text message');}
-      const rep=m.pending?'<span style="color:#888;font-size:11px">awaiting reply...</span>'
-        :(m.reply?`<span style="color:#3B6D11;font-weight:500">✓ ${m.reply}</span>`:'<span style="color:#aaa">sent</span>');
-      return `<div class="dlog-entry" style="padding:8px 0;border-bottom:0.5px solid #e0e0e0;font-size:13px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-          <span style="color:${col};font-weight:500">${lbl}</span>
-          <span style="color:#aaa;font-size:11px">${m.time}</span>
-        </div>
-        <div style="color:#666">${rep}</div>
-      </div>`;
-    }).join('');
+}
+
+void sleepScreen() {
+  if (screenOn) {
+    screenOn = false;
+    setScreenBrightness(0);
   }
- 
-  function showDevIdle(){
-    const loc=state.floor?state.floor.floorName+' / '+state.floor.bldName:'No location set';
-    const scr=document.getElementById('devScr');
-    if(scr) scr.innerHTML=`
-      <div class="dev-idle-t">OPERATOR TRACKER</div>
-      <div class="dev-idle-l" id="devLoc">${loc}</div>
-`;
+}
+
+// ============================================================
+// IMU
+// ============================================================
+void imuW(uint8_t r, uint8_t v) {
+  Wire.beginTransmission(IMU_ADDR);Wire.write(r);Wire.write(v);Wire.endTransmission();
+}
+bool imuInit() {
+  imuW(0x02,0x60);delay(10);imuW(0x08,0x03);delay(10);
+  imuW(0x03,0x34);delay(10);imuW(0x04,0x54);return true;
+}
+void imuRead() {
+  int16_t r[3];
+  Wire.beginTransmission(IMU_ADDR);Wire.write(0x35);Wire.endTransmission(false);
+  Wire.requestFrom(IMU_ADDR,6);
+  for(int i=0;i<3;i++) r[i]=Wire.read()|(Wire.read()<<8);
+  ax=r[0]/8192.0f;ay=r[1]/8192.0f;az=r[2]/8192.0f;
+}
+bool isWristRaise() {
+  // זיהוי הרמת יד — הטיה ספציפית
+  float pitch = atan2f(-ax, sqrtf(ay*ay+az*az)) * 180.0f / PI;
+  float mag = sqrtf(ax*ax+ay*ay+az*az);
+  // צריך: הטיה מעל 35 מעלות + תאוצה סבירה (לא נפילה)
+  return (pitch > 50.0f && mag > 0.8f && mag < 1.3f);
+}
+// Jerk-based fall detection — sensitive to any sharp movement
+float prevAx=0,prevAy=0,prevAz=0;
+unsigned long lastImuMs=0;
+
+void checkFall(){
+  if(millis()-lastFall<FALL_CD) return;
+  unsigned long now=millis();
+  float dt=(now-lastImuMs)/1000.0f;
+  if(dt<0.005f){lastImuMs=now;return;}
+
+  float jx=(ax-prevAx)/dt,jy=(ay-prevAy)/dt,jz=(az-prevAz)/dt;
+  float jerk=sqrtf(jx*jx+jy*jy+jz*jz);
+  prevAx=ax;prevAy=ay;prevAz=az;lastImuMs=now;
+
+  if(jerk>6.0f){
+    lastFall=now;
+    Serial.printf("FALL jerk=%.1f\n",jerk);
+    fbPUT("/operator/fall",
+      "{\"detected\":true,\"time\":\""+String(now)+"\"}");
+    playAlert(true);
   }
- 
-  function sendFreeText(txt){
-    const col='#185FA5';
-    state.dlog.unshift({type:'text',from:state.user,time:now(),text:txt,reply:null,pending:true});
-    if(state.dlog.length>20) state.dlog.pop();
-    addLog('<b>'+state.user+'</b> sent free text: <span style="color:'+col+'">'+txt+'</span>');
-    set(ref(db,'messages/pending'), {type:'text', text:txt, from:state.user, time:now(), replied:false});
-    renderDlog();
+}
+}
+
+// ============================================================
+// Audio — ES8311 + I2S
+// ============================================================
+static i2s_chan_handle_t i2s_tx=NULL;
+void esW(uint8_t r,uint8_t v){
+  Wire.beginTransmission(ES8311_ADDR);Wire.write(r);Wire.write(v);Wire.endTransmission();
+}
+void es8311Init(){
+  esW(0x45,0x00);delay(10);esW(0x01,0x30);esW(0x02,0x10);esW(0x03,0x10);
+  esW(0x16,0x24);esW(0x04,0x20);esW(0x05,0x00);esW(0x06,0x03);
+  esW(0x07,0x00);esW(0x08,0xFF);esW(0x09,0x0C);esW(0x0A,0x0C);
+  esW(0x10,0x1F);esW(0x11,0x7F);esW(0x00,0x80);esW(0x0D,0x01);
+  esW(0x01,0x3F);esW(0x14,0x1A);esW(0x12,0x28);esW(0x13,0x10);
+  esW(0x37,0x08);esW(0x32,0xBF);esW(0x44,0x08);esW(0x31,0x00);
+  esW(0x15,0x40);esW(0x3B,0x00);esW(0x3C,0x00);esW(0x17,0xBF);
+  esW(0x0E,0x02);esW(0x0F,0x44);delay(50);
+}
+void i2sBegin(){
+  es8311Init();
+  pinMode(PA_CTRL,OUTPUT);
+  digitalWrite(PA_CTRL,LOW); // שתק בהתחלה
+  delay(50);
+  i2s_chan_config_t cc=I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0,I2S_ROLE_MASTER);
+  i2s_new_channel(&cc,&i2s_tx,NULL);
+  i2s_std_config_t sc={
+    .clk_cfg=I2S_STD_CLK_DEFAULT_CONFIG(16000),
+    .slot_cfg=I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,I2S_SLOT_MODE_MONO),
+    .gpio_cfg={
+      .mclk=(gpio_num_t)I2S_MCLK,.bclk=(gpio_num_t)I2S_SCLK,
+      .ws=(gpio_num_t)I2S_LRCK,.dout=(gpio_num_t)I2S_DSDIN,
+      .din=I2S_GPIO_UNUSED,.invert_flags={false,false,false}},
+  };
+  i2s_channel_init_std_mode(i2s_tx,&sc);
+  i2s_channel_enable(i2s_tx);
+  // Flush silence to prevent startup noise
+  int16_t silence[256]={0};
+  size_t wr;
+  for(int i=0;i<8;i++) i2s_channel_write(i2s_tx,silence,sizeof(silence),&wr,100);
+}
+void playTone(int hz,int ms){
+  if(!i2s_tx)return;
+  digitalWrite(PA_CTRL,HIGH); // enable PA
+  int sr=16000,tot=sr*ms/1000;
+  int16_t buf[128];float ph=0,inc=2*PI*hz/sr;
+  size_t wr;int done=0;
+  while(done<tot){
+    int n=min(128,tot-done);
+    for(int i=0;i<n;i++){buf[i]=(int16_t)(sinf(ph)*6000);ph+=inc;if(ph>2*PI)ph-=2*PI;}
+    i2s_channel_write(i2s_tx,buf,n*2,&wr,100);done+=n;
   }
- 
-  var currentMsgType='';
-  var currentMsgLbl='';
- 
-  window.devReplyGlobal = function(msg){
-    // Update dlog entry
-    for(var i=0;i<state.dlog.length;i++){
-      if(state.dlog[i].pending){
-        state.dlog[i].reply=msg;
-        state.dlog[i].pending=false;
+  // Silence flush
+  int16_t silence[64]={0};
+  i2s_channel_write(i2s_tx,silence,sizeof(silence),&wr,50);
+  digitalWrite(PA_CTRL,LOW); // disable PA after playing
+}
+void stopAudio(){
+  delay(20);
+  digitalWrite(PA_CTRL,LOW);
+}
+
+void playAlert(bool urgent){
+  // הפעל PA
+  digitalWrite(PA_CTRL,HIGH);
+  delay(30);
+  int freq=urgent?1500:900;
+  // גל סינוס ישיר
+  const int SR=16000;
+  auto beep=[&](int ms){
+    int tot=SR*ms/1000;
+    int16_t buf[64];
+    float ph=0,inc=2*PI*freq/SR;
+    size_t wr; int done=0;
+    while(done<tot){
+      int n=min(64,tot-done);
+      for(int i=0;i<n;i++){buf[i]=(int16_t)(sinf(ph)*8000);ph+=inc;if(ph>2*PI)ph-=2*PI;}
+      if(i2s_tx) i2s_channel_write(i2s_tx,buf,n*2,&wr,100);
+      done+=n;
+    }
+  };
+  beep(120);delay(60);
+  beep(120);delay(60);
+  beep(180);
+  delay(30);
+  digitalWrite(PA_CTRL,LOW);
+}
+void playSOSBeep(){
+  playTone(1500,80);delay(50);playTone(1500,80);
+  stopAudio();
+}
+
+// ============================================================
+// AXP2101 Battery
+// ============================================================
+uint8_t axpR(uint8_t r){
+  Wire.beginTransmission(AXP_ADDR);Wire.write(r);Wire.endTransmission(false);
+  Wire.requestFrom(AXP_ADDR,1);return Wire.available()?Wire.read():0;
+}
+void readBatt(){
+  uint8_t p=axpR(0xA4);
+  if(p<=100){battPct=p;}
+  else{
+    uint8_t hi=axpR(0x22),lo=axpR(0x23);
+    uint16_t raw=((uint16_t)hi<<4)|(lo>>4);
+    float v=raw/1000.0f;
+    if(v<2.5f||v>5.0f){battPct=50;return;}
+    if(v>=4.15f)battPct=100;
+    else if(v>=4.0f)battPct=85;
+    else if(v>=3.85f)battPct=65;
+    else if(v>=3.75f)battPct=45;
+    else if(v>=3.65f)battPct=25;
+    else battPct=10;
+  }
+  isCharging=(axpR(0x01)&0x04)!=0;
+}
+
+// ============================================================
+// WiFi & BSSID
+// ============================================================
+String macStr(uint8_t*b){
+  char s[18];snprintf(s,18,"%02X:%02X:%02X:%02X:%02X:%02X",b[0],b[1],b[2],b[3],b[4],b[5]);
+  return String(s);
+}
+
+// Firebase
+void fbPUT(String p,String b){
+  if(WiFi.status()!=WL_CONNECTED)return;
+  HTTPClient h;h.begin(String(FB)+p+".json");
+  h.addHeader("Content-Type","application/json");h.PUT(b);h.end();
+}
+void fbPATCH(String p,String b){
+  if(WiFi.status()!=WL_CONNECTED)return;
+  HTTPClient h;h.begin(String(FB)+p+".json");
+  h.addHeader("Content-Type","application/json");h.PATCH(b);h.end();
+}
+void fbDEL(String p){
+  if(WiFi.status()!=WL_CONNECTED)return;
+  HTTPClient h;h.begin(String(FB)+p+".json");
+  h.sendRequest("DELETE","");h.end();
+}
+void pushLoc(){
+  if(curFloor.isEmpty())return;
+  fbPUT("/operator/location",
+    "{\"bld\":\""+curBld+"\",\"fid\":\""+curFid+
+    "\",\"bldName\":\""+curBldName+"\",\"floorName\":\""+curFloor+
+    "\",\"updatedAt\":\""+String(millis())+"\"}");
+}
+
+// BSSID Scan — Smart logic with -95dBm threshold
+// ============================================================
+// BSSID Location Logic - Smart Version
+// ============================================================
+// הלוגיקה:
+// 1. סרוק את כל הרשתות הנראות
+// 2. מצא את החזק ביותר שנמצא בטבלה (-95dBm מינימום)
+// 3. עדכן מיקום רק אם RSSI חזק מספיק ביחס לשני הטוב
+// 4. אם יש שתי קומות עם RSSI דומה - קח את הקרוב יותר
+// ============================================================
+
+struct ScanResult {
+  BEntry* entry;
+  int rssi;
+  String mac;
+};
+
+void scanBSSID(){
+  if(WiFi.status()!=WL_CONNECTED) return;
+
+  int n = WiFi.scanNetworks(false, true);
+  if(n<=0){ WiFi.scanDelete(); return; }
+
+  // אסוף את כל ה-BSSID המוכרים עם ה-RSSI שלהם
+  ScanResult results[BMAP_N];
+  int rCount=0;
+
+  for(int i=0;i<n;i++){
+    String b = macStr(WiFi.BSSID(i));
+    int rssi = WiFi.RSSI(i);
+    if(rssi < -95) continue; // התעלם מחלשים מאוד
+
+    for(int j=0;j<BMAP_N;j++){
+      if(b.equalsIgnoreCase(bmap[j].mac)){
+        if(rCount < BMAP_N){
+          results[rCount++] = {&bmap[j], rssi, b};
+        }
         break;
       }
     }
-    // Log it
-    addLog('<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">'+msg+'</span>" — '+currentMsgLbl);
-    // Update Firebase
-    update(ref(db,'messages/pending'), {replied:true, reply:msg});
-    state.pending=null;
-    showDevIdle();
-    renderDlog();
-  };
- 
-  function sendDev(type){
-    const isPage=type==='page';
-    const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
-    currentMsgType=type;
-    currentMsgLbl=lbl;
-    const col=isPage?'#EF9F27':'#63cc47';
-    const r1txt=isPage?'Calling you right away':"I'm OK";
-    state.pending={type,from:state.user};
-    // Add to dlog
-    for(var i=0;i<state.dlog.length;i++){state.dlog[i].pending=false;}
-    state.dlog.unshift({type:type,from:state.user,time:now(),reply:null,pending:true});
-    if(state.dlog.length>8) state.dlog.pop();
-    addLog('<b>'+state.user+'</b> sent <span style="color:'+col+';font-weight:500">'+lbl+'</span> → device');
-    const iconSvg=isPage
-      ?'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
-      :'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
-    var scr=document.getElementById('devScr');
-    if(scr) scr.innerHTML=
-      '<div class="dev-msg-w">'
-      +'<div class="dev-ring '+type+'">'
-      +'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="'+(isPage?'#EF9F27':'#63cc47')+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'+iconSvg+'</svg>'
-      +'</div>'
-      +'<div class="dev-from">From: '+state.user+'</div>'
-      +'<div class="dev-msg '+type+'">'+lbl+'</div>'
-      +'<div class="dev-ts">'+now()+'</div>'
-      +'<div class="dev-sep"></div>'
-      +'<div class="dev-rl">Operator reply:</div>'
-      +'<div class="dev-rbtns">'
-      +'<button class="dev-rbtn'+(isPage?' urg':'')+'" data-msg="'+r1txt+'" onclick="window.devReplyGlobal(this.dataset.msg)">'+r1txt+'</button>'
-      +'<button class="dev-dis" data-msg="Dismiss" onclick="window.devReplyGlobal(this.dataset.msg)">Dismiss</button>'
-      +'</div></div>';
-    set(ref(db,'messages/pending'), {type:type, from:state.user, time:now(), replied:false});
-    renderDlog();
   }
- 
-  function doExit(){
-    const last=state.floor?state.floor.bldName+' / '+state.floor.floorName:'unknown';
-    state.floor=null; state.sos=false; state.pending=null;
-    state.log=[]; state.dlog=[];
-    document.getElementById('sosAlert').classList.remove('show');
-    document.getElementById('btnSOS').classList.remove('active');
-    document.getElementById('btnSOS').textContent='SOS';
-    document.getElementById('btnFall').classList.remove('active');
-    document.getElementById('exitConfirm').classList.remove('show');
-    updateHero(); renderBuildings(); renderDlog(); renderLog(); showDevIdle();
-    document.getElementById('tsDisp').textContent=now();
-    set(ref(db,'operator/location'), null);
-    set(ref(db,'operator/sos'), false);
-    set(ref(db,'operator/lastSeen'), now());
-    addLog(`<b>Tunnel exit confirmed</b> — last location: ${last}. Map and log cleared.`);
+  WiFi.scanDelete();
+
+  Serial.printf("Scan: %d known APs\n", rCount);
+  for(int i=0;i<rCount;i++){
+    Serial.printf("AP: %s %s %ddBm\n",
+      results[i].entry->fn, results[i].mac.c_str(), results[i].rssi);
   }
- 
-  function listenFirebase(){
-    onValue(ref(db,'operator'), snap=>{
-      const data=snap.val();
-      if(!data) return;
-      state.operatorData=data;
-      if(data.pressure){
- 
+
+  if(rCount==0){
+    // אין ראוטר מוכר — אל תנקה מיד
+    static unsigned long noMatchT=0;
+    if(noMatchT==0) noMatchT=millis();
+    if(millis()-noMatchT>25000 && !curFloor.isEmpty()){
+      Serial.println("No known AP for 25s - clearing");
+      curFloor=""; curBldName="";
+      fbDEL("/operator/location");
+      updateMainUI(); noMatchT=0;
+    }
+    return;
+  }
+
+  // מצא את הכי חזק
+  ScanResult* best=&results[0];
+  for(int i=1;i<rCount;i++){
+    if(results[i].rssi > best->rssi) best=&results[i];
+  }
+
+  // בדוק: האם יש ראוטר שני חזק ב-5dBm פחות מאותה קומה?
+  // אם כן — אנחנו בוודאות באותה קומה
+  // אם יש ראוטר מקומה אחרת עם RSSI דומה (פחות מ-8dBm הפרש) — קח את הכי חזק
+
+  Serial.printf("Best: %s %s %ddBm\n",
+    best->entry->fn, best->mac.c_str(), best->rssi);
+
+  // עדכן מיקום רק אם שונה
+  if(curFloor != best->entry->fn){
+    curFloor   = best->entry->fn;
+    curBldName = best->entry->bn;
+    curBld     = best->entry->bld;
+    curFid     = best->entry->fid;
+    Serial.printf("Location: %s\n", curFloor.c_str());
+    updateMainUI();
+    pushLoc();
+  }
+
+  // Control Room
+  if(String(best->entry->bld)=="CTR"){
+    fbPUT("/operator/location", "{\"bld\":\"CTR\",\"fid\":\"CTR\",\"bldName\":\"Control Room\",\"floorName\":\"Control Room\",\"updatedAt\":\"0\"}");
+  }
+
+  // Roam to better AP if needed (same floor, different AP)
+  String connMAC = macStr(WiFi.BSSID());
+  if(!best->mac.equalsIgnoreCase(connMAC) &&
+     best->rssi > WiFi.RSSI()+10 &&
+     millis()-tRoam>25000){
+    tRoam=millis();
+    Serial.printf("Roam: %s->%s\n", connMAC.c_str(), best->mac.c_str());
+    String ssid=WiFi.SSID(), pass="";
+    for(int i=0;i<NNET;i++) if(String(nets[i].ssid)==ssid){pass=nets[i].pass;break;}
+    WiFi.disconnect(); delay(200);
+    WiFi.begin(ssid.c_str(), pass.length()?pass.c_str():nullptr);
+    int t=0; while(WiFi.status()!=WL_CONNECTED&&t<15){delay(300);t++;}
+    Serial.println("Roam done");
+  }
+}
+
+void connectWifi(){
+  for(int n=0;n<NNET;n++){
+    WiFi.disconnect(true);delay(100);
+    WiFi.begin(nets[n].ssid,nets[n].pass[0]?nets[n].pass:nullptr);
+    int t=0;while(WiFi.status()!=WL_CONNECTED&&t<20){delay(500);t++;}
+    if(WiFi.status()==WL_CONNECTED){
+      curSSID=nets[n].ssid;inTunnel=nets[n].tunnel;
+      // MAT רק אם אין מיקום — יתעדכן מיד אחרי סריקת BSSID
+      if(inTunnel&&curFloor.isEmpty()){
+        curFloor="Main Access Tunnel";curBldName="MAT Tunnel";
+        curBld="TUN";curFid="ENT";
+        // אל תשלח ל-Firebase עדיין — סריקת BSSID תעדכן תוך שניות
       }
-      if(data.location){
-        const loc=data.location;
-        state.floor={bld:loc.bld, fid:loc.fid, bldName:loc.bldName, floorName:loc.floorName, cls:loc.cls};
-        updateHero(); renderBuildings();
-        const devLoc=document.getElementById('devLoc');
-        if(devLoc) devLoc.textContent=loc.floorName+' / '+loc.bldName;
-        const wi=document.getElementById('wifiIndicator');
-        if(wi) wi.style.display='inline';
-        const bb=document.getElementById('heroBSSID');
-        if(bb&&loc.bssid){bb.textContent='AP: '+loc.bssid;bb.style.display='block';}
-        if(loc.bssid){
-          document.getElementById('bssidPanel').style.display='block';
-          document.getElementById('bssidText').textContent='BSSID: '+loc.bssid+(loc.ssid?' ('+loc.ssid+')':'');
-          document.getElementById('bssidSignal').textContent=loc.rssi?loc.rssi+' dBm':'—';
-        }
+      if(!inTunnel){
+        curFloor="Control Room";curBldName="Control Room";
+        curBld="CTR";curFid="CTR";
+        fbPUT("/operator/location", "{\"bld\":\"CTR\",\"fid\":\"CTR\",\"bldName\":\"Control Room\",\"floorName\":\"Control Room\",\"updatedAt\":\"0\"}");
       }
-      if(data.sos===true&&!state.sos){
-        state.sos=true;
-        document.getElementById('btnSOS').classList.add('active');
-        document.getElementById('btnSOS').textContent='Cancel SOS';
-        document.getElementById('sosAlert').classList.add('show');
-        document.getElementById('sosText').textContent='DISTRESS ALERT — '+now()+(state.floor?' | '+state.floor.floorName+' / '+state.floor.bldName:'');
-        addLog(`<b style="color:#A32D2D">SOS activated!</b>${state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''}`);
-      }
-      document.getElementById('tsDisp').textContent=now();
-    });
- 
-    onValue(ref(db,'operator/fall'), snap=>{
-      const data=snap.val();
-      if(!data||!data.detected) return;
-      const fallEl=document.getElementById('fallAlert');
-      const fallText=document.getElementById('fallText');
-      if(fallEl&&!fallEl.classList.contains('show')){
-        fallEl.classList.add('show');
-        document.getElementById('btnFall').classList.add('active');
-        if(fallText) fallText.textContent='Fall detected at '+data.time+(state.floor?' — '+state.floor.floorName+' / '+state.floor.bldName:'');
-        addLog('<b style="color:#7C3AED">⚠ Fall detected!</b>'+(state.floor?' — '+state.floor.bldName+' / '+state.floor.floorName:''));
-      }
-    });
- 
-    onValue(ref(db,'messages/pending'), snap=>{
-      const msg=snap.val();
-      if(!msg) return;
-      // If replied externally (from watch), update our local dlog and log
-      if(msg.replied&&msg.reply){
-        var found=false;
-        for(var i=0;i<state.dlog.length;i++){
-          if(state.dlog[i].pending){
-            state.dlog[i].reply=msg.reply;
-            state.dlog[i].pending=false;
-            found=true;
-            break;
+      Serial.printf("WiFi: %s\n",nets[n].ssid);
+      updateMainUI();return;
+    }
+  }
+  curSSID="";updateMainUI();
+}
+
+bool initDone=false;
+void pollMsg(){
+  if(WiFi.status()!=WL_CONNECTED)return;
+  if(!initDone){initDone=true;return;}
+  HTTPClient h;h.begin(String(FB)+"/messages/pending.json");
+  int c=h.GET();
+  if(c==200){
+    String pl=h.getString();
+    if(pl=="null"||pl.isEmpty()){h.end();return;}
+    StaticJsonDocument<512> doc;
+    if(!deserializeJson(doc,pl)&&!doc.isNull()){
+      bool replied=doc["replied"]|true;
+      if(!replied){
+        String type=doc["type"]|"";
+        String text=doc["text"]|"";
+        String from=doc["from"]|"";
+        String time=doc["time"]|"";
+        // מפתח ייחודי להודעה — from+time
+        String msgKey = from + "|" + time + "|" + type + "|" + text;
+
+        if(!type.isEmpty()||!text.isEmpty()){
+          // אל תציג את אותה הודעה פעמיים
+          if(msgKey == pm.lastShownKey){
+            h.end(); return;
           }
+          pm.lastShownKey = msgKey;
+          pm.type=type; pm.from=from; pm.text=text;
+          bool isPage=(type=="page");
+          pm.r1=isPage?"Calling you right away":"I'm OK";
+          pm.active=true;
+          showMsgBanner();
+          wakeScreen();
+          pm.needBeep=true;
         }
-        if(found){
-          addLog('<b>Operator</b> replied "<span style="color:#3B6D11;font-weight:500">'+msg.reply+'</span>"');
-          state.pending=null;
-          renderDlog();
-        }
-        return;
       }
-      if(msg.replied) return;
-      const isPage=msg.type==='page';
-      const lbl=isPage?'Immediate Attendance Required !':'Are you OK?';
-      const col=isPage?'#EF9F27':'#63cc47';
-      const iconSvg=isPage
-        ?'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
-        :'<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>';
-      const scr=document.getElementById('devScr');
-      if(scr) scr.innerHTML=`
-        <div class="dev-msg-w">
-          <div class="dev-ring ${msg.type}">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${col}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
-          </div>
-          <div class="dev-from">From: ${msg.from}</div>
-          <div class="dev-msg ${msg.type}">${lbl}</div>
-          <div class="dev-ts">${msg.time}</div>
-          <div class="dev-sep"></div>
-          <div class="dev-rl">Operator reply:</div>
-          <div class="dev-rbtns">
-            <button class="dev-rbtn${isPage?' urg':''}" id="fbR1">${isPage?'Calling you right away':"I'm OK"}</button>
-            <button class="dev-dis" id="fbR2">Dismiss</button>
-          </div>
-        </div>`;
-      document.getElementById('fbR1').addEventListener('click', ()=>{
-        update(ref(db,'messages/pending'),{replied:true,reply:isPage?'Calling you right away':"I'm OK"});
-        showDevIdle();
-      });
-      document.getElementById('fbR2').addEventListener('click', ()=>{
-        update(ref(db,'messages/pending'),{replied:true,reply:'Dismiss'});
-        showDevIdle();
-      });
-    });
- 
-    onValue(ref(db,'viewers'), snap=>{
-      const data=snap.val();
-      if(!data) return;
-      state.viewers=Object.values(data);
-      renderViewers();
-    });
+    }
   }
- 
-  function validateCreds(u, p){
-    if(!u) return null;
-    if(u===ADMIN_NAME&&p===ADMIN_PASS) return 'admin';
-    if(p===USER_PASS) return 'user';
-    return null;
+  h.end();
+}
+
+void sendReply(String r){
+  fbPATCH("/messages/pending","{\"replied\":true,\"reply\":\""+r+"\"}");
+  pm.active=false;
+  pm.needBeep=false;
+  pm.lastShownKey="";
+  hideMsgBanner();
+}
+
+// ============================================================
+// UI Builders
+// ============================================================
+void buildSplash(){
+  scr_splash=lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(scr_splash,CLR_BG,0);
+  lv_obj_set_style_bg_opa(scr_splash,LV_OPA_COVER,0);
+
+  // Logo circle
+  lv_obj_t *circle=lv_obj_create(scr_splash);
+  lv_obj_set_size(circle,160,160);
+  lv_obj_align(circle,LV_ALIGN_CENTER,0,-60);
+  lv_obj_set_style_radius(circle,80,0);
+  lv_obj_set_style_bg_color(circle,lv_color_hex(0x0D1B3E),0);
+  lv_obj_set_style_border_color(circle,CLR_BLUE,0);
+  lv_obj_set_style_border_width(circle,3,0);
+  lv_obj_clear_flag(circle,LV_OBJ_FLAG_SCROLLABLE);
+
+  // OT inside circle
+  lv_obj_t *ot=lv_label_create(circle);
+  lv_obj_set_style_text_color(ot,CLR_BLUE,0);
+  lv_obj_set_style_text_font(ot,&lv_font_montserrat_28,0);
+  lv_label_set_text(ot,"OT");
+  lv_obj_align(ot,LV_ALIGN_CENTER,0,0);
+
+  // Title
+  lv_obj_t *title=lv_label_create(scr_splash);
+  lv_obj_set_style_text_color(title,CLR_BLUE,0);
+  lv_obj_set_style_text_font(title,&lv_font_montserrat_28,0);
+  lv_label_set_text(title,"Operator Tracker");
+  lv_obj_align(title,LV_ALIGN_CENTER,0,60);
+
+  // Subtitle
+  lv_obj_t *sub=lv_label_create(scr_splash);
+  lv_obj_set_style_text_color(sub,CLR_GREEN,0);
+  lv_obj_set_style_text_font(sub,&lv_font_montserrat_20,0);
+  lv_label_set_text(sub,"GE VERNOVA");
+  lv_obj_align(sub,LV_ALIGN_CENTER,0,98);
+
+  // Loading bar
+  lv_obj_t *bar=lv_bar_create(scr_splash);
+  lv_obj_set_size(bar,260,8);
+  lv_obj_align(bar,LV_ALIGN_CENTER,0,155);
+  lv_obj_set_style_bg_color(bar,lv_color_hex(0x1A1A3A),0);
+  lv_obj_set_style_bg_color(bar,CLR_BLUE,LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar,4,0);
+  lv_obj_set_style_radius(bar,4,LV_PART_INDICATOR);
+  lv_bar_set_value(bar,0,LV_ANIM_OFF);
+
+  // Animate bar
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_exec_cb(&a,[](void*obj,int32_t v){lv_bar_set_value((lv_obj_t*)obj,v,LV_ANIM_OFF);});
+  lv_anim_set_var(&a,bar);
+  lv_anim_set_values(&a,0,100);
+  lv_anim_set_duration(&a,2000);
+  lv_anim_start(&a);
+
+  lv_screen_load(scr_splash);
+  setScreenBrightness(255);
+}
+
+void buildMainScreen(){
+  scr_main=lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(scr_main,CLR_BG,0);
+  lv_obj_set_style_bg_opa(scr_main,LV_OPA_COVER,0);
+  lv_obj_clear_flag(scr_main,LV_OBJ_FLAG_SCROLLABLE);
+
+  // ===== TIME (large) =====
+  lbl_time=lv_label_create(scr_main);
+  lv_obj_set_style_text_color(lbl_time,CLR_WHITE,0);
+  lv_obj_set_style_text_font(lbl_time,&lv_font_montserrat_48,0);
+  lv_label_set_text(lbl_time,"--:--");
+  lv_obj_align(lbl_time,LV_ALIGN_TOP_MID,0,18);
+
+  // ===== DATE =====
+  lbl_date=lv_label_create(scr_main);
+  lv_obj_set_style_text_color(lbl_date,CLR_LGRAY,0);
+  lv_obj_set_style_text_font(lbl_date,&lv_font_montserrat_16,0);
+  lv_label_set_text(lbl_date,"---");
+  lv_obj_align(lbl_date,LV_ALIGN_TOP_MID,0,78);
+
+  // ===== WiFi + Battery row =====
+  // WiFi label
+  lbl_wifi=lv_label_create(scr_main);
+  lv_obj_set_style_text_font(lbl_wifi,&lv_font_montserrat_14,0);
+  lv_obj_set_style_text_color(lbl_wifi,CLR_GREEN,0);
+  lv_label_set_text(lbl_wifi,LV_SYMBOL_WIFI " ---");
+  lv_obj_align(lbl_wifi,LV_ALIGN_TOP_LEFT,12,102);
+
+  // Battery bar
+  bar_batt=lv_bar_create(scr_main);
+  lv_obj_set_size(bar_batt,50,10);
+  lv_obj_align(bar_batt,LV_ALIGN_TOP_RIGHT,-44,106);
+  lv_obj_set_style_bg_color(bar_batt,lv_color_hex(0x333355),0);
+  lv_obj_set_style_bg_color(bar_batt,CLR_GREEN,LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar_batt,3,0);
+  lv_obj_set_style_radius(bar_batt,3,LV_PART_INDICATOR);
+  lv_bar_set_value(bar_batt,80,LV_ANIM_OFF);
+
+  lbl_batt=lv_label_create(scr_main);
+  lv_obj_set_style_text_font(lbl_batt,&lv_font_montserrat_12,0);
+  lv_obj_set_style_text_color(lbl_batt,CLR_LGRAY,0);
+  lv_label_set_text(lbl_batt,"--%%");
+  lv_obj_align(lbl_batt,LV_ALIGN_TOP_RIGHT,-100,104);
+
+  lbl_charge=lv_label_create(scr_main);
+  lv_obj_set_style_text_font(lbl_charge,&lv_font_montserrat_16,0);
+  lv_obj_set_style_text_color(lbl_charge,CLR_YELLOW,0);
+  lv_label_set_text(lbl_charge,"");
+  lv_obj_align(lbl_charge,LV_ALIGN_TOP_RIGHT,-10,100);
+
+  // ===== Location Card =====
+  lv_obj_t *card=lv_obj_create(scr_main);
+  lv_obj_set_size(card,430,170);
+  lv_obj_align(card,LV_ALIGN_TOP_MID,0,122);
+  lv_obj_set_style_bg_color(card,CLR_CARD,0);
+  lv_obj_set_style_border_color(card,CLR_BLUE,0);
+  lv_obj_set_style_border_width(card,1,0);
+  lv_obj_set_style_radius(card,16,0);
+  lv_obj_set_style_pad_all(card,14,0);
+  lv_obj_clear_flag(card,LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *loc_label=lv_label_create(card);
+  lv_obj_set_style_text_color(loc_label,CLR_GRAY,0);
+  lv_obj_set_style_text_font(loc_label,&lv_font_montserrat_12,0);
+  lv_label_set_text(loc_label,LV_SYMBOL_GPS " LOCATION");
+  lv_obj_align(loc_label,LV_ALIGN_TOP_LEFT,0,0);
+
+  lbl_floor=lv_label_create(card);
+  lv_obj_set_style_text_color(lbl_floor,CLR_WHITE,0);
+  lv_obj_set_style_text_font(lbl_floor,&lv_font_montserrat_24,0);
+  lv_label_set_text(lbl_floor,"Scanning...");
+  lv_obj_align(lbl_floor,LV_ALIGN_TOP_LEFT,0,22);
+
+  lbl_bld=lv_label_create(card);
+  lv_obj_set_style_text_color(lbl_bld,CLR_LGRAY,0);
+  lv_obj_set_style_text_font(lbl_bld,&lv_font_montserrat_14,0);
+  lv_label_set_text(lbl_bld,"");
+  lv_obj_align(lbl_bld,LV_ALIGN_TOP_LEFT,0,56);
+
+  lbl_bssid=lv_label_create(card);
+  lv_obj_set_style_text_color(lbl_bssid,CLR_GRAY,0);
+  lv_obj_set_style_text_font(lbl_bssid,&lv_font_montserrat_12,0);
+  lv_label_set_text(lbl_bssid,"BSSID: ---");
+  lv_obj_align(lbl_bssid,LV_ALIGN_TOP_LEFT,0,82);
+
+  lbl_signal=lv_label_create(card);
+  lv_obj_set_style_text_color(lbl_signal,CLR_GRAY,0);
+  lv_obj_set_style_text_font(lbl_signal,&lv_font_montserrat_12,0);
+  lv_label_set_text(lbl_signal,"Signal: ---");
+  lv_obj_align(lbl_signal,LV_ALIGN_TOP_LEFT,0,102);
+
+  // ===== SOS Panel =====
+  panel_sos=lv_obj_create(scr_main);
+  lv_obj_set_size(panel_sos,430,70);
+  lv_obj_align(panel_sos,LV_ALIGN_TOP_MID,0,302);
+  lv_obj_set_style_bg_color(panel_sos,lv_color_hex(0x1A0000),0);
+  lv_obj_set_style_border_color(panel_sos,CLR_RED,0);
+  lv_obj_set_style_border_width(panel_sos,1,0);
+  lv_obj_set_style_radius(panel_sos,12,0);
+  lv_obj_clear_flag(panel_sos,LV_OBJ_FLAG_SCROLLABLE);
+
+  lbl_sos=lv_label_create(panel_sos);
+  lv_obj_set_style_text_color(lbl_sos,CLR_GRAY,0);
+  lv_obj_set_style_text_font(lbl_sos,&lv_font_montserrat_14,0);
+  lv_label_set_text(lbl_sos,LV_SYMBOL_POWER " Hold BOOT = SOS");
+  lv_obj_align(lbl_sos,LV_ALIGN_CENTER,0,0);
+
+  // ===== Hint bar =====
+  lv_obj_t *hint=lv_label_create(scr_main);
+  lv_obj_set_style_text_color(hint,lv_color_hex(0x444466),0);
+  lv_obj_set_style_text_font(hint,&lv_font_montserrat_12,0);
+  lv_label_set_text(hint,"BOOT = SOS   Touch = Reply");
+  lv_obj_align(hint,LV_ALIGN_BOTTOM_MID,0,-8);
+}
+
+// Message Banner (shown as overlay on main screen)
+static void msg_reply_cb(lv_event_t *e){
+  lv_obj_t *btn = (lv_obj_t*)lv_event_get_target(e);
+  // Remove all styles and force green
+  lv_obj_remove_style_all(btn);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(0x00FF44), 0);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(btn, 10, 0);
+  lv_obj_invalidate(btn);
+  lv_refr_now(NULL); // force immediate redraw
+  delay(120);
+  String *r=(String*)lv_event_get_user_data(e);
+  sendReply(*r);
+}
+static String reply_r1="", reply_dismiss="Dismiss";
+
+// Accumulated messages for stacking
+static String accumulatedMsgs = "";
+static lv_obj_t *lbl_msg_stack = nullptr;
+
+void showMsgBanner(){
+  bool isPage=(pm.type=="page");
+  bool hasText=!pm.text.isEmpty();
+  lv_color_t bc=isPage?CLR_ORANGE:CLR_GREEN;
+  String newMsgTxt=hasText?pm.text:(isPage?"Immediate Attendance Required!":"Are you OK?");
+
+  // If banner already open - just add new message line
+  if(panel_msg && lbl_msg_stack){
+    accumulatedMsgs += String("\n") + newMsgTxt;
+    lv_label_set_text(lbl_msg_stack, accumulatedMsgs.c_str());
+    lv_obj_set_style_border_color(panel_msg, bc, 0);
+    return;
   }
- 
-  function enterApp(u, admin){
-    state.user=u; state.admin=admin;
-    const vRef=ref(db,'viewers/'+u.replace(/\s/g,'_'));
-    set(vRef,{name:u,online:true,since:now(),left:null,admin});
-    document.getElementById('hAv').textContent=ini(u);
-    document.getElementById('hName').textContent=u;
-    document.getElementById('pgLogin').style.display='none';
-    document.getElementById('pgApp').style.display='block';
-    addLog(`<b>${u}</b> connected as viewer${admin?' <span style="color:#185FA5">[Admin]</span>':''}`);
-    renderBuildings(); renderViewers(); listenFirebase();
+
+  // New banner
+  accumulatedMsgs = newMsgTxt;
+  if(panel_msg) lv_obj_del(panel_msg);
+  lbl_msg_stack = nullptr;
+
+  panel_msg=lv_obj_create(lv_layer_top());
+  lv_obj_set_size(panel_msg,420,220);
+  lv_obj_align(panel_msg,LV_ALIGN_CENTER,0,0);
+  lv_obj_set_style_bg_color(panel_msg,isPage?lv_color_hex(0x1A0800):lv_color_hex(0x001A08),0);
+  lv_obj_set_style_border_color(panel_msg,bc,0);
+  lv_obj_set_style_border_width(panel_msg,3,0);
+  lv_obj_set_style_radius(panel_msg,20,0);
+  lv_obj_set_style_pad_all(panel_msg,16,0);
+  lv_obj_clear_flag(panel_msg,LV_OBJ_FLAG_SCROLLABLE);
+
+  // From
+  lv_obj_t *from=lv_label_create(panel_msg);
+  lv_obj_set_style_text_color(from,CLR_LGRAY,0);
+  lv_obj_set_style_text_font(from,&lv_font_montserrat_12,0);
+  String fromTxt="From: "+pm.from;
+  lv_label_set_text(from,fromTxt.c_str());
+  lv_obj_align(from,LV_ALIGN_TOP_LEFT,0,0);
+
+  // Stacked messages label
+  lbl_msg_stack=lv_label_create(panel_msg);
+  lv_obj_set_style_text_color(lbl_msg_stack,bc,0);
+  lv_obj_set_style_text_font(lbl_msg_stack,&lv_font_montserrat_18,0);
+  lv_obj_set_width(lbl_msg_stack,388);
+  lv_label_set_long_mode(lbl_msg_stack, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(lbl_msg_stack,accumulatedMsgs.c_str());
+  lv_obj_align(lbl_msg_stack,LV_ALIGN_TOP_LEFT,0,22);
+
+  // Reply button
+  lv_obj_t *btn_ok=lv_btn_create(panel_msg);
+  lv_obj_set_size(btn_ok,190,38);
+  lv_obj_align(btn_ok,LV_ALIGN_BOTTOM_LEFT,-15,0);
+  lv_obj_set_style_bg_color(btn_ok,bc,0);
+  lv_obj_set_style_bg_color(btn_ok,lv_color_white(),LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(btn_ok,LV_OPA_70,LV_STATE_PRESSED);
+  lv_obj_set_style_radius(btn_ok,10,0);
+  lv_obj_set_style_shadow_width(btn_ok,0,0); // scale down on press
+
+  reply_r1=hasText?"Read":pm.r1;
+  lv_obj_add_event_cb(btn_ok,msg_reply_cb,LV_EVENT_PRESSED,&reply_r1);
+
+  lv_obj_t *lbl_ok=lv_label_create(btn_ok);
+  lv_obj_set_style_text_color(lbl_ok,CLR_BG,0);
+  lv_obj_set_style_text_font(lbl_ok,&lv_font_montserrat_16,0);
+  lv_label_set_text(lbl_ok,reply_r1.c_str());
+  lv_obj_align(lbl_ok,LV_ALIGN_CENTER,0,0);
+
+  // Dismiss button
+  lv_obj_t *btn_dis=lv_btn_create(panel_msg);
+  lv_obj_set_size(btn_dis,190,38);
+  lv_obj_align(btn_dis,LV_ALIGN_BOTTOM_RIGHT,-15,0);
+  lv_obj_set_style_bg_color(btn_dis,lv_color_hex(0x222244),0);
+  lv_obj_set_style_bg_color(btn_dis,lv_color_hex(0x555577),LV_STATE_PRESSED);
+  lv_obj_set_style_radius(btn_dis,10,0);
+  lv_obj_set_style_shadow_width(btn_dis,0,0);
+
+  lv_obj_add_event_cb(btn_dis,msg_reply_cb,LV_EVENT_PRESSED,&reply_dismiss);
+
+  lv_obj_t *lbl_dis=lv_label_create(btn_dis);
+  lv_obj_set_style_text_color(lbl_dis,CLR_LGRAY,0);
+  lv_obj_set_style_text_font(lbl_dis,&lv_font_montserrat_16,0);
+  lv_label_set_text(lbl_dis,"Dismiss");
+  lv_obj_align(lbl_dis,LV_ALIGN_CENTER,0,0);
+
+  // Slide-in animation
+  lv_anim_t a;lv_anim_init(&a);
+  lv_anim_set_var(&a,panel_msg);
+  lv_anim_set_exec_cb(&a,[](void*obj,int32_t v){lv_obj_set_y((lv_obj_t*)obj,v);});
+  lv_anim_set_values(&a,LCD_HEIGHT,lv_obj_get_y(panel_msg));
+  lv_anim_set_duration(&a,300);
+  lv_anim_set_path_cb(&a,lv_anim_path_ease_out);
+  lv_anim_start(&a);
+}
+
+void hideMsgBanner(){
+  if(!panel_msg)return;
+  lv_obj_del(panel_msg);
+  panel_msg=nullptr;
+  lbl_msg_stack=nullptr;
+  accumulatedMsgs="";
+}
+
+// Update main UI with current state
+void updateMainUI(){
+  if(!scr_main)return;
+
+  // Location
+  if(lbl_floor){
+    lv_label_set_text(lbl_floor, curFloor.isEmpty()?"Scanning...":curFloor.c_str());
   }
- 
-  function doLogin(){
-    const u=document.getElementById('inUser').value.trim();
-    const p=document.getElementById('inPass').value;
-    const err=document.getElementById('loginErr');
-    const role=validateCreds(u,p);
-    if(!u){err.textContent='Please enter a username.';err.classList.add('show');return;}
-    if(!role){err.textContent='Incorrect password. Please try again.';err.classList.add('show');return;}
-    err.classList.remove('show');
-    localStorage.setItem('ot_session_user', u);
-    localStorage.setItem('ot_session_pass', p);
-    const remCreds=document.getElementById('rememberCreds');
-    if(remCreds && remCreds.checked){
-      localStorage.setItem('ot_saved_user', u);
-      localStorage.setItem('ot_saved_pass', p);
+  if(lbl_bld) lv_label_set_text(lbl_bld,curBldName.c_str());
+  if(lbl_bssid){
+    String b="BSSID: "+(WiFi.status()==WL_CONNECTED?macStr(WiFi.BSSID()):"---");
+    lv_label_set_text(lbl_bssid,b.c_str());
+  }
+  if(lbl_signal){
+    String s=WiFi.status()==WL_CONNECTED?
+      "Signal: "+String(WiFi.RSSI())+" dBm":
+      "Signal: ---";
+    lv_label_set_text(lbl_signal,s.c_str());
+  }
+  if(lbl_wifi){
+    bool ok=(WiFi.status()==WL_CONNECTED);
+    lv_obj_set_style_text_color(lbl_wifi,ok?CLR_GREEN:CLR_RED,0);
+    String w=String(LV_SYMBOL_WIFI)+" "+(ok?curSSID:"No WiFi");
+    lv_label_set_text(lbl_wifi,w.c_str());
+  }
+  // Battery
+  if(bar_batt) lv_bar_set_value(bar_batt,battPct,LV_ANIM_ON);
+  if(lbl_batt){
+    char buf[8];sprintf(buf,"%d%%",battPct);
+    lv_label_set_text(lbl_batt,buf);
+    lv_obj_set_style_text_color(lbl_batt,
+      battPct>50?CLR_GREEN:battPct>20?CLR_YELLOW:CLR_RED,0);
+    lv_obj_set_style_bg_color(bar_batt,
+      battPct>50?CLR_GREEN:battPct>20?CLR_YELLOW:CLR_RED,LV_PART_INDICATOR);
+  }
+  if(lbl_charge) lv_label_set_text(lbl_charge,isCharging?LV_SYMBOL_CHARGE:"");
+
+  // SOS panel
+  if(panel_sos&&lbl_sos){
+    if(sosActive){
+      lv_obj_set_style_bg_color(panel_sos,lv_color_hex(0x330000),0);
+      lv_obj_set_style_border_color(panel_sos,CLR_RED,0);
+      lv_obj_set_style_text_color(lbl_sos,CLR_RED,0);
+      lv_label_set_text(lbl_sos,LV_SYMBOL_WARNING " SOS ACTIVE " LV_SYMBOL_WARNING);
     } else {
-      localStorage.removeItem('ot_saved_user');
-      localStorage.removeItem('ot_saved_pass');
-    }
-    enterApp(u, role==='admin');
-  }
- 
-  function doLogout(){
-    const vRef=ref(db,'viewers/'+state.user.replace(/\s/g,'_'));
-    update(vRef,{online:false,left:now()});
-    state.user=null; state.admin=false; state.floor=null; state.sos=false; state.log=[]; state.dlog=[]; state.pending=null;
-    localStorage.removeItem('ot_session_user');
-    localStorage.removeItem('ot_session_pass');
-    const savedUser=localStorage.getItem('ot_saved_user');
-    const savedPass=localStorage.getItem('ot_saved_pass');
-    document.getElementById('inUser').value=savedUser||'';
-    document.getElementById('inPass').value=savedPass||'';
-    const remCreds=document.getElementById('rememberCreds');
-    if(remCreds) remCreds.checked=!!(savedUser&&savedPass);
-    document.getElementById('pgApp').style.display='none';
-    document.getElementById('pgLogin').style.display='block';
-  }
- 
-  function tryAutoLogin(){
-    const su=localStorage.getItem('ot_session_user');
-    const sp=localStorage.getItem('ot_session_pass');
-    if(su&&sp&&validateCreds(su,sp)){
-      enterApp(su, validateCreds(su,sp)==='admin');
-      return;
-    }
-    const savedUser=localStorage.getItem('ot_saved_user');
-    const savedPass=localStorage.getItem('ot_saved_pass');
-    if(savedUser&&savedPass){
-      document.getElementById('inUser').value=savedUser;
-      document.getElementById('inPass').value=savedPass;
-      const remCreds=document.getElementById('rememberCreds');
-      if(remCreds) remCreds.checked=true;
+      lv_obj_set_style_bg_color(panel_sos,lv_color_hex(0x1A0000),0);
+      lv_obj_set_style_border_color(panel_sos,lv_color_hex(0x441111),0);
+      lv_obj_set_style_text_color(lbl_sos,CLR_GRAY,0);
+      lv_label_set_text(lbl_sos,LV_SYMBOL_POWER " Hold BOOT = SOS");
     }
   }
- 
-  window.addEventListener('DOMContentLoaded', ()=>{
-    renderDlog();
- 
-    document.getElementById('btnLogin').addEventListener('click', doLogin);
-    document.getElementById('inPass').addEventListener('keydown', e=>{if(e.key==='Enter')doLogin();});
-    document.getElementById('btnSignout').addEventListener('click', doLogout);
- 
- 
- 
- 
- 
-    document.getElementById('btnClearSOS').addEventListener('click', ()=>{
-      state.sos=false;
-      document.getElementById('btnSOS').classList.remove('active');
-      document.getElementById('btnSOS').textContent='SOS';
-      document.getElementById('sosAlert').classList.remove('show');
-      set(ref(db,'operator/sos'), false);
-      addLog('SOS cleared');
-    });
- 
- 
-    document.getElementById('btnPage').addEventListener('click', ()=>sendDev('page'));
- 
-    // Reset Map button (Control Room)
-    document.getElementById('btnExitCR').addEventListener('click', ()=>{
-      if(!confirm('Reset map and clear all location data?')) return;
-      state.floor=null; state.sos=false; state.pending=null;
-      state.log=[]; state.dlog=[];
-      document.getElementById('sosAlert').classList.remove('show');
-      document.getElementById('fallAlert').classList.remove('show');
-      updateHero(); renderBuildings(); renderDlog(); renderLog();
-      set(ref(db,'operator/location'), null);
-      set(ref(db,'operator/sos'), false);
-      set(ref(db,'operator/fall'), {detected:false, time:null});
-      addLog('<b>Map reset</b> by '+state.user);
-    });
- 
-    // Free text message
-    document.getElementById('btnFreeText').addEventListener('click', ()=>{
-      const txt = document.getElementById('freeTextInput').value.trim();
-      if(!txt) return;
-      sendFreeText(txt);
-      document.getElementById('freeTextInput').value='';
-    });
-    document.getElementById('freeTextInput').addEventListener('keydown', e=>{
-      if(e.key==='Enter') document.getElementById('btnFreeText').click();
-    });
-    document.getElementById('btnAYOK').addEventListener('click', ()=>sendDev('ayok'));
-    document.getElementById('btnClearLog').addEventListener('click', ()=>{state.log=[];renderLog();});
-    document.getElementById('btnClearFall').addEventListener('click', ()=>{
-      document.getElementById('fallAlert').classList.remove('show');
-      document.getElementById('btnFall').classList.remove('active');
-      set(ref(db,'operator/fall'), {detected:false,time:null});
-      addLog('Fall alert cleared');
-    });
- 
-    setInterval(()=>{if(state.user) document.getElementById('tsDisp').textContent=now();}, 1000);
- 
-    tryAutoLogin();
-  });
-</script>
- 
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;color:#111}
-@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#eee}}
- 
-#pgLogin{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
-.login-card{background:white;border:0.5px solid #e0e0e0;border-radius:12px;padding:2rem;width:100%;max-width:360px}
-@media(prefers-color-scheme:dark){.login-card{background:#242424;border-color:#333}}
-.ll-logo{display:flex;align-items:center;gap:10px;margin-bottom:1.5rem}
-.ll-icon{width:38px;height:38px;background:#185FA5;border-radius:8px;display:flex;align-items:center;justify-content:center}
-.ll-icon svg{width:22px;height:22px;fill:white}
-.ll-title{font-size:16px;font-weight:500}
-.ll-sub{font-size:11px;color:#888;margin-top:2px}
-.fg{margin-bottom:14px}
-.fl{font-size:12px;color:#666;margin-bottom:5px;display:block}
-.fi{width:100%;padding:9px 12px;border:0.5px solid #ccc;border-radius:8px;font-size:13px;background:white;color:#111;outline:none}
-.fi:focus{border-color:#185FA5;box-shadow:0 0 0 2px #E6F1FB}
-@media(prefers-color-scheme:dark){.fi{background:#1a1a1a;color:#eee;border-color:#444}}
-.lbtn{width:100%;padding:10px;background:#185FA5;color:white;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;margin-top:6px}
-.lerr{font-size:12px;color:#A32D2D;background:#FCEBEB;border:0.5px solid #F09595;border-radius:6px;padding:8px 12px;margin-top:10px;display:none}
-.lerr.show{display:block}
- 
-#pgApp{display:none}
-.app{padding:1rem;max-width:1100px;margin:0 auto}
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;padding-bottom:1rem;border-bottom:0.5px solid #e0e0e0}
-@media(prefers-color-scheme:dark){.topbar{border-color:#333}}
-.hlogo{width:36px;height:36px;background:#185FA5;border-radius:8px;display:flex;align-items:center;justify-content:center}
-.hlogo svg{width:20px;height:20px;fill:white}
-.htitle{font-size:18px;font-weight:500}
-.hsub{font-size:12px;color:#888;margin-top:2px}
-.hright{display:flex;align-items:center;gap:10px}
-.ldot{width:8px;height:8px;border-radius:50%;background:#3B6D11;animation:blink 2s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0.4}}
-.upd{font-size:11px;color:#999}
-.uchip{display:flex;align-items:center;gap:6px;background:#f0f0f0;border:0.5px solid #ddd;border-radius:20px;padding:4px 10px 4px 4px}
-@media(prefers-color-scheme:dark){.uchip{background:#2a2a2a;border-color:#444}}
-.ucav{width:24px;height:24px;border-radius:50%;background:#B5D4F4;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:#0C447C}
-.ucname{font-size:12px}
-.signout{font-size:11px;color:#999;background:none;border:none;cursor:pointer;padding:2px 6px}
- 
-.hero{background:white;border:2px solid #185FA5;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1rem;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-@media(prefers-color-scheme:dark){.hero{background:#242424}}
-.hero-icon{width:44px;height:44px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.hero-icon svg{width:22px;height:22px;stroke:#185FA5;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.hero-label{font-size:11px;color:#888;margin-bottom:3px;letter-spacing:0.4px}
-.hero-floor{font-size:20px;font-weight:500;line-height:1.2}
-.hero-floor.none{font-size:15px;color:#aaa;font-weight:400}
-.hero-bld{font-size:12px;color:#888;margin-top:3px}
-.hero-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.act-btns{display:flex;gap:8px}
-.exit-btn{background:none;border:1px solid #ccc;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;color:#666;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}
-.exit-btn svg{width:13px;height:13px}
-.fall-btn{background:#7C3AED;color:white;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px}
-.fall-btn.active{animation:fallblink 0.5s infinite}
-@keyframes fallblink{0%,100%{background:#7C3AED}50%{background:#A855F7}}
-.sos-btn{background:#A32D2D;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
-.sos-btn.active{animation:sosf 0.5s infinite}
-@keyframes sosf{0%,100%{background:#A32D2D}50%{background:#E24B4A}}
- 
-.sos-alert{display:none;align-items:center;gap:12px;background:#FCEBEB;border:1px solid #F09595;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
-.sos-alert.show{display:flex}
-.sos-alert-text{flex:1;font-size:13px;font-weight:500;color:#501313}
-.sos-clear{background:none;border:1px solid #A32D2D;color:#A32D2D;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
-.fall-alert{display:none;align-items:center;gap:12px;background:#FCEBEB;border:2px solid #A32D2D;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
-.fall-alert.show{display:flex}
-.fall-alert-text{font-size:11px;color:#791F1F;margin-top:2px}
-.exit-confirm{display:none;align-items:center;gap:12px;background:#FAEEDA;border:1px solid #EF9F27;border-radius:8px;padding:12px 16px;margin-bottom:1rem}
-.exit-confirm.show{display:flex}
-.exit-confirm-text{flex:1;font-size:13px;color:#633806}
-.exit-yes{background:#A32D2D;color:white;border:none;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;margin-right:6px}
-.exit-no{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
- 
-.bldgs{display:grid;grid-template-columns:minmax(0,0.7fr) minmax(0,0.8fr) minmax(0,0.9fr) minmax(0,1.6fr) minmax(0,1.3fr);gap:0.7rem;margin-bottom:1rem}
-.bld{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
-@media(prefers-color-scheme:dark){.bld{background:#242424;border-color:#333}}
-.bh{padding:9px 12px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
-@media(prefers-color-scheme:dark){.bh{background:#2a2a2a;border-color:#333}}
-.bn{font-size:12px;font-weight:500}
-.bb{font-size:10px;padding:2px 7px;border-radius:10px}
-.bb-mh{background:#E6F1FB;color:#185FA5}.bb-tfh{background:#EAF3DE;color:#3B6D11}.bb-aph{background:#EEEDFE;color:#534AB7}.bb-ctr{background:#E6F1FB;color:#0C447C}.bb-tun{background:#F1EFE8;color:#5F5E5A}
-.fl-row{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:0.5px solid #e0e0e0;cursor:pointer;position:relative;transition:background 0.12s}
-@media(prefers-color-scheme:dark){.fl-row{border-color:#333}}
-.fl-row:last-child{border-bottom:none}
-.fl-row{cursor:default}
- 
-.fl-row.sel-mh{background:#E6F1FB}.fl-row.sel-tfh{background:#EAF3DE}.fl-row.sel-aph{background:#EEEDFE}.fl-row.sel-ctr{background:#E6F1FB}.fl-row.sel-tun{background:#F1EFE8}
-.fl-row.sel-mh::before,.fl-row.sel-tfh::before,.fl-row.sel-aph::before,.fl-row.sel-tun::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:0 2px 2px 0}
-.fl-row.sel-mh::before{background:#185FA5}.fl-row.sel-tfh::before{background:#3B6D11}.fl-row.sel-aph::before{background:#534AB7}.fl-row.sel-ctr::before{background:#0C447C}.fl-row.sel-tun::before{background:#888780}
-.fl-icon{width:30px;height:30px;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-@media(prefers-color-scheme:dark){.fl-icon{background:#333}}
-.fl-icon svg{width:16px;height:16px;stroke:#888}
-.fl-row.sel-mh .fl-icon{background:#B5D4F4}.fl-row.sel-tfh .fl-icon{background:#C0DD97}.fl-row.sel-aph .fl-icon{background:#CECBF6}.fl-row.sel-ctr .fl-icon{background:#B5D4F4}.fl-row.sel-tun .fl-icon{background:#D3D1C7}
-.fl-name{font-size:11px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fl-desc{font-size:10px;color:#888}
-.wdot{width:10px;height:10px;border-radius:50%;background:#185FA5;animation:blink 1.5s infinite}
- 
-.bottom-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1rem;margin-bottom:1rem}
-.panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
-@media(prefers-color-scheme:dark){.panel{background:#242424;border-color:#333}}
-.ph{padding:10px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
-@media(prefers-color-scheme:dark){.ph{background:#2a2a2a;border-color:#333}}
-.pt{font-size:13px;font-weight:500}
-.ps{font-size:11px;color:#999}
-.pb{padding:12px 14px}
-.dev-row{display:flex;gap:14px;align-items:flex-start}
-.dev-frame{background:#12121f;border-radius:16px;width:185px;flex-shrink:0;overflow:hidden;border:2px solid #2a2a45}
-.dev-top{background:#0a0a18;padding:6px 12px;display:flex;align-items:center;justify-content:space-between}
-.dev-brand{font-size:8px;color:#4a9eff;font-weight:600;letter-spacing:1px}
-.dev-batt{width:18px;height:9px;border:1.5px solid #4a9eff;border-radius:2px;position:relative}
-.dev-batt-fill{position:absolute;left:1.5px;top:1.5px;bottom:1.5px;width:70%;background:#4a9eff;border-radius:1px}
-.dev-scr{background:#0d1117;padding:12px;min-height:155px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}
-.dev-idle-t{font-size:10px;color:#4a9eff;font-weight:500;letter-spacing:0.5px;text-align:center}
-.dev-idle-l{font-size:10px;color:#9ca3af;text-align:center;line-height:1.4}
-.dev-idle-s{font-size:11px;color:#6b7280;text-align:center;margin-top:2px}
-.dev-msg-w{display:flex;flex-direction:column;align-items:center;gap:7px;width:100%}
-.dev-ring{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
-.dev-ring.page{background:rgba(186,117,23,0.15);border:2px solid #BA7517}
-.dev-ring.ayok{background:rgba(99,204,71,0.12);border:2px solid #63cc47}
-.dev-from{font-size:8px;color:#6b7280}
-.dev-msg{font-size:12px;font-weight:500;text-align:center;line-height:1.3}
-.dev-msg.page{color:#EF9F27}.dev-msg.ayok{color:#63cc47}
-.dev-ts{font-size:8px;color:#4b5563}
-.dev-sep{width:100%;height:0.5px;background:#1f2937;margin:2px 0}
-.dev-rl{font-size:9px;color:#6b7280;align-self:flex-start}
-.dev-rbtns{display:flex;flex-direction:column;gap:4px;width:100%;margin-top:2px}
-.dev-rbtn{background:#1a3a20;color:#63cc47;border:1px solid #3B6D11;border-radius:6px;padding:7px;font-size:10px;font-weight:500;cursor:pointer;text-align:center;width:100%}
-.dev-rbtn.urg{background:#1e1e35;color:#4a9eff;border-color:#185FA5}
-.dev-dis{background:none;border:1px solid #1f2937;color:#6b7280;border-radius:6px;padding:6px;font-size:10px;cursor:pointer;width:100%}
-.dev-bot{background:#0a0a18;padding:5px 12px;display:flex;justify-content:center;gap:18px}
-.dev-dot{width:7px;height:7px;border-radius:50%;background:#1e1e35;border:1.5px solid #3a3a5a}
-.dev-right{flex:1;display:flex;flex-direction:column;gap:8px}
-.msg-btns{display:flex;flex-direction:column;gap:7px}
-.mbtn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:500;width:100%;text-align:left}
-.mbtn:hover{opacity:0.85}
-.mbtn.page{background:#BA7517;color:white}.mbtn.ayok{background:#3B6D11;color:white}
-.mbtn-icon{width:30px;height:30px;border-radius:6px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.mbtn-icon svg{width:15px;height:15px}
-.mbtn-title{font-size:12px;font-weight:500}
-.mbtn-desc{font-size:10px;opacity:0.8;margin-top:1px}
-.dlog-box{background:#f5f5f5;border-radius:8px;border:0.5px solid #e0e0e0;padding:9px 12px}
-@media(prefers-color-scheme:dark){.dlog-box{background:#2a2a2a;border-color:#333}}
-.dlog-title{font-size:11px;font-weight:500;color:#888;margin-bottom:6px}
-.dlog-entry{font-size:10px;padding:4px 0;border-bottom:0.5px solid #e0e0e0;color:#666;line-height:1.4}
-.dlog-entry:last-child{border-bottom:none}
-.dlog-empty{font-size:10px;color:#aaa;font-style:italic}
-.dt{color:#aaa;margin-right:4px}
-.viewers-panel{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
-@media(prefers-color-scheme:dark){.viewers-panel{background:#242424;border-color:#333}}
-.vrow{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:0.5px solid #e0e0e0}
-@media(prefers-color-scheme:dark){.vrow{border-color:#333}}
-.vrow:last-child{border-bottom:none}
-.vrow.off{opacity:0.5}
-.vav{width:28px;height:28px;border-radius:50%;background:#B5D4F4;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:#0C447C;flex-shrink:0}
-.vav.gry{background:#D3D1C7;color:#444441}
-.vname{font-size:12px;font-weight:500;flex:1}
-.vstatus{font-size:10px;color:#aaa}
-.vstatus.on{color:#3B6D11}
-.vpip{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.vpip.on{background:#3B6D11;animation:blink 2s infinite}.vpip.off{background:#aaa}
-.vadmin{font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:6px}
-.log-wrap{background:white;border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden}
-@media(prefers-color-scheme:dark){.log-wrap{background:#242424;border-color:#333}}
-.log-hdr{padding:10px 14px;background:#f5f5f5;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between}
-@media(prefers-color-scheme:dark){.log-hdr{background:#2a2a2a;border-color:#333}}
-.log-title{font-size:13px;font-weight:500}
-.log-clr-btn{background:none;border:1px solid #ccc;color:#666;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer}
-.log-body{max-height:150px;overflow-y:auto}
-.log-row{display:flex;gap:12px;padding:7px 14px;border-bottom:0.5px solid #e0e0e0;font-size:11px}
-@media(prefers-color-scheme:dark){.log-row{border-color:#333}}
-.log-row:last-child{border-bottom:none}
-.log-t{color:#aaa;white-space:nowrap;flex-shrink:0}
-.log-x{color:#666}
-.log-x b{color:#111;font-weight:500}
-@media(prefers-color-scheme:dark){.log-x b{color:#eee}}
-.firebase-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:#888;margin-top:4px}
-.firebase-badge svg{width:12px;height:12px}
-</style>
-</head>
-<body>
- 
-<div id="pgLogin">
-  <div class="login-card">
-    <div class="ll-logo">
-      <div class="ll-icon"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
-      <div>
-        <div class="ll-title">Operator Tracker</div>
-        <div class="ll-sub">KKH Pumped Storage</div>
-      </div>
-    </div>
-    <div class="fg"><label class="fl">Username</label><input class="fi" id="inUser" type="text" placeholder="Enter your name" autocomplete="off"/></div>
-    <div class="fg"><label class="fl">Password</label><input class="fi" id="inPass" type="password" placeholder="Enter password" autocomplete="off"/></div>
-    <button class="lbtn" id="btnLogin">Sign in</button>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
-      <input type="checkbox" id="rememberCreds" style="width:14px;height:14px;cursor:pointer"/>
-      <label for="rememberCreds" style="font-size:12px;color:#888;cursor:pointer">Remember my username and password on this device</label>
-    </div>
-    <div class="lerr" id="loginErr">Incorrect password. Please try again.</div>
-    <div class="firebase-badge" style="margin-top:12px">
-      <svg viewBox="0 0 24 24" fill="#F57C00"><path d="M5.85 12.21L3.29 20l7.64-4.35L5.85 12.21zM20.71 20L13.07 3.5l-1.5 5.57 4.5 7.79L20.71 20zM12.14 9.86L10.71 4.5 3.29 20l8.85-10.14z"/></svg>
-      Connected to Firebase — live data
-    </div>
-  </div>
-</div>
- 
-<div id="pgApp">
-<div class="app">
-  <div class="topbar">
-    <div style="display:flex;align-items:center;gap:12px">
-      <div class="hlogo"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
-      <div><div class="htitle">Operator Tracker</div><div class="hsub">KKH Pumped Storage — Real-time Location Monitoring</div></div>
-    </div>
-    <div class="hright">
-      <div class="ldot"></div>
-      <span style="font-size:12px;color:#888">Live</span>
-      <div class="upd" id="tsDisp">--:--:--</div>
-      <div class="uchip">
-        <div class="ucav" id="hAv">?</div>
-        <div class="ucname" id="hName">—</div>
-        <button class="signout" id="btnSignout">Sign out</button>
-      </div>
-    </div>
-  </div>
- 
-  <div class="hero">
-    <div class="hero-icon"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
-    <div>
-      <div class="hero-label" style="display:flex;align-items:center;gap:6px">
-        Operator current location
-        <span id="wifiIndicator" style="display:none;font-size:10px;background:#EAF3DE;color:#27500A;padding:1px 7px;border-radius:10px">WiFi located</span>
-      </div>
-      <div id="heroFloor" class="hero-floor none">No location detected — awaiting device data</div>
-      <div id="heroBld" class="hero-bld" style="display:none"></div>
-      <div id="heroBSSID" style="font-size:10px;color:#aaa;margin-top:2px;display:none"></div>
-    </div>
-    <div class="hero-right">
-      <button class="exit-btn" id="btnExitCR" style="background:#185FA5;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h6"/></svg>
-        Reset Map
-      </button>
-    </div>
-  </div>
- 
-  <div class="sos-alert" id="sosAlert">
-    <div class="sos-alert-text" id="sosText">Distress alert!</div>
-    <button class="sos-clear" id="btnClearSOS">Clear</button>
-  </div>
-  <div class="fall-alert" id="fallAlert">
-    <div style="display:flex;align-items:center;gap:10px;flex:1">
-      <div style="width:40px;height:40px;border-radius:50%;background:#A32D2D;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:sosf 0.5s infinite">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M6 20v-4a6 6 0 0 1 12 0v4"/><line x1="12" y1="14" x2="12" y2="22"/></svg>
-      </div>
-      <div>
-        <div style="font-size:14px;font-weight:500;color:#501313">Fall detected!</div>
-        <div class="fall-alert-text" id="fallText">Operator may have fallen — check immediately</div>
-      </div>
-    </div>
-    <button class="sos-clear" id="btnClearFall">Clear</button>
-  </div>
- 
- 
- 
-  <div class="bssid-panel" id="bssidPanel" style="display:none">
-    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#EAF3DE;border:1px solid #3B6D11;border-radius:8px;margin-bottom:1rem">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B6D11" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="#3B6D11"/></svg>
-      <div style="flex:1">
-        <div style="font-size:12px;font-weight:500;color:#27500A">Located via WiFi</div>
-        <div style="font-size:10px;color:#3B6D11;margin-top:1px" id="bssidText">—</div>
-      </div>
-      <div style="font-size:10px;color:#3B6D11;background:white;padding:2px 8px;border-radius:10px;border:0.5px solid #3B6D11" id="bssidSignal">—</div>
-    </div>
-  </div>
- 
-  <div class="bldgs" id="bldgs"></div>
- 
-  <div class="bottom-grid">
-    <div class="panel">
-      <div class="ph"><div class="pt">Send message to operator</div><div class="ps">Watch will display as banner</div></div>
-      <div class="pb">
-        <div class="msg-btns" style="display:flex;flex-direction:column;gap:10px">
-          <button class="mbtn page" id="btnPage">
-            <div class="mbtn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-            <div><div class="mbtn-title">Immediate Attendance Required !</div><div class="mbtn-desc">Urgent alert — operator replies on watch</div></div>
-          </button>
-          <button class="mbtn ayok" id="btnAYOK">
-            <div class="mbtn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
-            <div><div class="mbtn-title">Are you OK?</div><div class="mbtn-desc">Wellness check — operator replies on watch</div></div>
-          </button>
-          <div style="background:#f5f5f5;border-radius:10px;padding:12px;border:0.5px solid #e0e0e0">
-            <div style="font-size:12px;font-weight:500;color:#555;margin-bottom:8px">Free text message</div>
-            <div style="display:flex;gap:8px">
-              <input id="freeTextInput" type="text" placeholder="Type a message in English or Hebrew..."
-                style="flex:1;padding:9px 12px;border:0.5px solid #ccc;border-radius:8px;font-size:13px;outline:none;background:white;color:#111"/>
-              <button id="btnFreeText" style="background:#185FA5;color:white;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap">Send</button>
-            </div>
-          </div>
-          <div class="dlog-box" style="max-height:220px;overflow-y:auto">
-            <div class="dlog-title" style="font-size:13px;font-weight:500;margin-bottom:8px">Message history — watch responses</div>
-            <div id="dlogBody"><div class="dlog-empty">No messages sent yet.</div></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="viewers-panel">
-      <div class="ph"><div class="pt">Viewers connected</div><div class="ps" id="viewerCount">0 online</div></div>
-      <div id="viewersList"><div style="padding:8px 14px;font-size:12px;color:#aaa">No viewers yet.</div></div>
-    </div>
-  </div>
- 
-  <div class="log-wrap">
-    <div class="log-hdr"><div class="log-title">Event log</div><button class="log-clr-btn" id="btnClearLog">Clear</button></div>
-    <div class="log-body" id="logBody"></div>
-  </div>
-</div>
-</div>
- 
-</body>
-</html>
+}
+
+void updateClock(){
+  // שימוש ב-millis לשעון פשוט (ניתן לחבר RTC בהמשך)
+  static unsigned long baseMs=0;
+  static int baseH=0,baseM=0,baseS=0;
+  static bool synced=false;
+
+  // נסה לסנכרן דרך WiFi NTP
+  if(!synced&&WiFi.status()==WL_CONNECTED){
+    configTime(3*3600,0,"pool.ntp.org","il.pool.ntp.org"); // UTC+2 ישראל
+    struct tm ti;
+    if(getLocalTime(&ti,2000)){
+      baseH=ti.tm_hour;baseM=ti.tm_min;baseS=ti.tm_sec;
+      baseMs=millis();synced=true;
+    }
+  }
+
+  unsigned long elapsed=(millis()-baseMs)/1000;
+  int totalS=baseH*3600+baseM*60+baseS+elapsed;
+  int h=(totalS/3600)%24,m=(totalS/60)%60,s=totalS%60;
+
+  char timeBuf[8];
+  sprintf(timeBuf,"%02d:%02d",h,m);
+  if(lbl_time) lv_label_set_text(lbl_time,timeBuf);
+
+  // Date from NTP
+  if(synced){
+    struct tm ti;getLocalTime(&ti,100);
+    char dateBuf[24];
+    strftime(dateBuf,sizeof(dateBuf),"%A %d/%m/%Y",&ti);
+    if(lbl_date) lv_label_set_text(lbl_date,dateBuf);
+  }
+}
+
+// ============================================================
+// Buttons
+// ============================================================
+void handleButtons(){
+  static bool lBoot=HIGH;
+  static unsigned long bootT=0;
+  static bool sosFired=false;
+  bool cBoot=digitalRead(BTN_BOOT);
+  unsigned long now=millis();
+
+  // BOOT falling edge = instant SOS toggle
+  if(lBoot==HIGH&&cBoot==LOW){
+    wakeScreen();
+    sosActive=!sosActive;
+    fbPUT("/operator/sos",sosActive?"true":"false");
+    if(sosActive) playSOSBeep();
+    updateMainUI();
+    Serial.printf("SOS: %s\n", sosActive?"ON":"OFF");
+  }
+  lBoot=cBoot;
+}
+
+// ============================================================
+// Setup
+// ============================================================
+void setup(){
+  Serial.begin(115200);
+  USBSerial.begin(115200);
+
+  pinMode(BTN_BOOT,INPUT_PULLUP);
+  pinMode(BTN_PWR,INPUT_PULLUP);
+
+  Wire.begin(IIC_SDA,IIC_SCL);
+
+  // IMU
+  if(imuInit()){imuOK=true;Serial.println("IMU OK");}
+
+  // Audio
+  i2sBegin();
+
+  // Display
+  if(!gfx->begin()){Serial.println("GFX fail");}
+  gfx->fillScreen(RGB565_BLACK);
+  // brightness set after LVGL init
+
+  // Touch
+  while(FT3168->begin()==false){
+    Serial.println("Touch init fail...");delay(1000);
+  }
+  FT3168->IIC_Write_Device_State(
+    FT3168->Arduino_IIC_Touch::Device::TOUCH_POWER_MODE,
+    FT3168->Arduino_IIC_Touch::Device_Mode::TOUCH_POWER_MONITOR);
+
+  // LVGL init
+  lv_init();
+  lv_tick_set_cb(millis_cb);
+
+  screenWidth=gfx->width();
+  screenHeight=gfx->height();
+  bufSize=screenWidth*50;
+
+  disp_draw_buf=(lv_color_t*)heap_caps_malloc(bufSize*2,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+  if(!disp_draw_buf) disp_draw_buf=(lv_color_t*)malloc(bufSize*2);
+
+  disp=lv_display_create(screenWidth,screenHeight);
+  lv_display_set_flush_cb(disp,my_disp_flush);
+  lv_display_set_buffers(disp,disp_draw_buf,NULL,bufSize*2,LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  lv_indev_t *indev=lv_indev_create();
+  lv_indev_set_type(indev,LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev,my_touchpad_read);
+  lv_display_add_event_cb(disp,rounder_event_cb,LV_EVENT_INVALIDATE_AREA,NULL);
+
+  // Splash
+  buildSplash();
+
+  // WiFi
+  WiFi.mode(WIFI_STA);
+
+  lastActivity=millis();
+  Serial.println("Setup done");
+}
+
+// ============================================================
+// Loop
+// ============================================================
+bool mainBuilt=false;
+unsigned long splashStart=0;
+
+void loop(){
+  unsigned long now=millis();
+  lv_task_handler();
+
+  // Splash → Main after 2.5s
+  if(!mainBuilt&&now>2500){
+    mainBuilt=true;
+    buildMainScreen();
+    readBatt();
+    updateMainUI();
+    lv_screen_load_anim(scr_main,LV_SCR_LOAD_ANIM_FADE_IN,400,0,false);
+    // Connect WiFi after splash
+    connectWifi();
+    updateMainUI();
+  }
+
+  if(!mainBuilt){delay(5);return;}
+
+  handleButtons();
+
+  // IMU
+  if(imuOK){
+    imuRead();
+    checkFall();
+    // Wake on wrist raise - only check every 500ms
+    static unsigned long lastWristCheck=0;
+    // wrist raise disabled temporarily
+  }
+
+  // Screen sleep
+  // Sleep disabled temporarily
+  // if(screenOn&&now-lastActivity>SLEEP_MS){ sleepScreen(); }
+
+  // Clock update every second
+  static unsigned long tClock=0;
+  if(now-tClock>1000){tClock=now;updateClock();}
+
+  // Location scan every 6s
+  if(now-tLoc>4000){
+    tLoc=now;
+    if(WiFi.status()==WL_CONNECTED){
+      scanBSSID();
+      updateMainUI();
+      pushLoc();
+    }
+  }
+
+  // Poll messages every 4s
+  if(now-tPoll>4000){tPoll=now;pollMsg();}
+  if(pm.needBeep){
+    pm.needBeep=false;
+    playAlert(pm.type=="page");
+  }
+
+  // Battery every 60s
+  if(now-tBatt>60000){tBatt=now;readBatt();updateMainUI();}
+
+  // WiFi reconnect
+  static unsigned long tDisc=0;
+  if(WiFi.status()!=WL_CONNECTED){
+    if(tDisc==0)tDisc=now;
+    if(now-tDisc>12000&&!curFloor.isEmpty()){
+      curFloor="";curBldName="";
+      fbDEL("/operator/location");
+      updateMainUI();
+    }
+    static unsigned long tRecon=0;
+    if(now-tRecon>25000){tRecon=now;tDisc=0;connectWifi();}
+  } else {
+    tDisc=0;
+    // Detect network change
+    static String lastSSID2="";
+    if(WiFi.SSID()!=lastSSID2){
+      lastSSID2=WiFi.SSID();curSSID=WiFi.SSID();
+      inTunnel=!(WiFi.SSID()==String("ControlRoom"));
+      scanBSSID();updateMainUI();
+    }
+  }
+
+  delay(5);
+}
