@@ -68,6 +68,46 @@
     aux:         '<rect x="3" y="9" width="18" height="11" rx="1"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/><circle cx="12" cy="14" r="2"/>'
   };
 
+  // ============================================================
+  // Web Audio — SOS ו-Fall
+  // ============================================================
+  let audioCtx=null, alertsEnabled=true;
+
+  function getACtx(){
+    if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    return audioCtx;
+  }
+  function playBeep(freq,dur,vol,delay){
+    setTimeout(()=>{
+      try{
+        const ctx=getACtx();
+        const o=ctx.createOscillator(), g=ctx.createGain();
+        o.connect(g);g.connect(ctx.destination);
+        o.frequency.value=freq;o.type='sine';
+        g.gain.setValueAtTime(vol,ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+dur);
+        o.start();o.stop(ctx.currentTime+dur);
+      }catch(e){}
+    },delay||0);
+  }
+  function alertSOS(){
+    [0,350,700,1400,1750,2100].forEach(t=>playBeep(1400,0.25,0.8,t));
+  }
+  function alertFall(){
+    playBeep(700,0.2,0.7,0);playBeep(1300,0.35,0.7,250);
+    playBeep(700,0.2,0.7,900);playBeep(1300,0.35,0.7,1150);
+  }
+  function toggleAlerts(){
+    alertsEnabled=!alertsEnabled;
+    const btn=document.getElementById('btnToggleAlert');
+    if(btn){
+      btn.textContent=alertsEnabled?'🔔 Alerts ON':'🔕 Alerts OFF';
+      btn.style.color=alertsEnabled?'#4ade80':'#aaa';
+      btn.style.borderColor=alertsEnabled?'#4ade80':'#444';
+    }
+    try{getACtx().resume();}catch(e){}
+  }
+
   let state = {
     user: null, admin: false,
     floor: null,
@@ -289,6 +329,7 @@
       }
       if(data.sos===true&&!state.sos){
         state.sos=true;
+        if(alertsEnabled) alertSOS();
         const sosInd=document.getElementById('sosIndicator');
         if(sosInd){sosInd.style.background='#FDECEC';sosInd.style.borderColor='#D93025';sosInd.style.color='#A32D2D';sosInd.style.fontWeight='700';sosInd.style.boxShadow='0 0 0 3px rgba(217,48,37,0.2)';sosInd.style.animation='sosf 0.6s ease-in-out infinite';}
         document.getElementById('sosAlert').classList.add('show');
@@ -320,6 +361,7 @@
         }
       }
       if(!data||!data.detected) return;
+      if(alertsEnabled) alertFall();
       // Update fall text with location and time
       const fallLoc=state.floor?state.floor.floorName+' / '+state.floor.bldName:'Location unknown';
       const fallT=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -785,6 +827,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="heroBSSID" style="font-size:10px;color:#aaa;margin-top:2px;display:none"></div>
     </div>
     <div class="hero-right" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button id="btnToggleAlert" onclick="toggleAlerts()" style="background:#0d0d1a;color:#4ade80;border:1px solid #4ade80;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:500;cursor:pointer">🔔 Alerts ON</button>
       <div id="sosIndicator" style="display:flex;align-items:center;gap:6px;background:#FFF0F0;border:1.5px solid #E8B4B4;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:600;color:#C0C0C0">
         <span style="font-size:14px">🚨</span>
         SOS
