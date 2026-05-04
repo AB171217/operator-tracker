@@ -69,43 +69,75 @@
   };
 
   // ============================================================
-  // Web Audio — SOS ו-Fall
+  // Web Audio — SOS & Fall alerts
   // ============================================================
-  let audioCtx=null, alertsEnabled=true;
+  let _ctx = null;
+  let alertsEnabled = true;
 
-  function getACtx(){
-    if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-    return audioCtx;
+  function getCtx(){
+    if(!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if(_ctx.state === 'suspended') _ctx.resume();
+    return _ctx;
   }
-  function playBeep(freq,dur,vol,delay){
-    setTimeout(()=>{
-      try{
-        const ctx=getACtx();
-        const o=ctx.createOscillator(), g=ctx.createGain();
-        o.connect(g);g.connect(ctx.destination);
-        o.frequency.value=freq;o.type='sine';
-        g.gain.setValueAtTime(vol,ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+dur);
-        o.start();o.stop(ctx.currentTime+dur);
-      }catch(e){}
-    },delay||0);
+
+  function beep(freq, startTime, dur, vol){
+    const ctx = getCtx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0, startTime);
+    g.gain.linearRampToValueAtTime(vol, startTime + 0.01);
+    g.gain.setValueAtTime(vol, startTime + dur - 0.05);
+    g.gain.linearRampToValueAtTime(0, startTime + dur);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start(startTime);
+    o.stop(startTime + dur);
   }
+
   function alertSOS(){
-    [0,350,700,1400,1750,2100].forEach(t=>playBeep(1400,0.25,0.8,t));
+    if(!alertsEnabled) return;
+    const ctx = getCtx();
+    const t = ctx.currentTime;
+    // SOS pattern: 3 short + 3 long + 3 short
+    const s = 0.15, l = 0.4, g = 0.12;
+    let x = t + 0.05;
+    [s,s,s].forEach(d=>{beep(1400,x,d,0.8);x+=d+g;});
+    x += 0.2;
+    [l,l,l].forEach(d=>{beep(1000,x,d,0.8);x+=d+g;});
+    x += 0.2;
+    [s,s,s].forEach(d=>{beep(1400,x,d,0.8);x+=d+g;});
   }
+
   function alertFall(){
-    playBeep(700,0.2,0.7,0);playBeep(1300,0.35,0.7,250);
-    playBeep(700,0.2,0.7,900);playBeep(1300,0.35,0.7,1150);
+    if(!alertsEnabled) return;
+    const ctx = getCtx();
+    const t = ctx.currentTime;
+    beep(600,  t+0.0,  0.15, 0.7);
+    beep(1200, t+0.2,  0.3,  0.7);
+    beep(600,  t+0.8,  0.15, 0.7);
+    beep(1200, t+1.0,  0.3,  0.7);
   }
+
   function toggleAlerts(){
-    alertsEnabled=!alertsEnabled;
-    const btn=document.getElementById('btnToggleAlert');
-    if(btn){
-      btn.textContent=alertsEnabled?'🔔 Alerts ON':'🔕 Alerts OFF';
-      btn.style.color=alertsEnabled?'#4ade80':'#aaa';
-      btn.style.borderColor=alertsEnabled?'#4ade80':'#444';
+    // Unlock audio on first click
+    getCtx();
+    alertsEnabled = !alertsEnabled;
+    const icon  = document.getElementById('alertIcon');
+    const label = document.getElementById('alertLabel');
+    const btn   = document.getElementById('btnToggleAlert');
+    if(alertsEnabled){
+      if(icon)  icon.textContent  = '🔔';
+      if(label) label.textContent = 'Sound ON';
+      if(btn){btn.style.background='#0d1a0d';btn.style.color='#4ade80';btn.style.borderColor='#4ade80';}
+      // Play test beep to confirm
+      beep(880, getCtx().currentTime+0.05, 0.1, 0.4);
+    } else {
+      if(icon)  icon.textContent  = '🔕';
+      if(label) label.textContent = 'Sound OFF';
+      if(btn){btn.style.background='#1a1a1a';btn.style.color='#666';btn.style.borderColor='#444';}
     }
-    try{getACtx().resume();}catch(e){}
   }
 
   let state = {
@@ -827,7 +859,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="heroBSSID" style="font-size:10px;color:#aaa;margin-top:2px;display:none"></div>
     </div>
     <div class="hero-right" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button id="btnToggleAlert" onclick="toggleAlerts()" style="background:#0d0d1a;color:#4ade80;border:1px solid #4ade80;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:500;cursor:pointer">🔔 Alerts ON</button>
+      <button id="btnToggleAlert" onclick="toggleAlerts()" style="background:#0d1a0d;color:#4ade80;border:1.5px solid #4ade80;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px">
+        <span id="alertIcon">🔔</span><span id="alertLabel">Sound ON</span>
+      </button>
       <div id="sosIndicator" style="display:flex;align-items:center;gap:6px;background:#FFF0F0;border:1.5px solid #E8B4B4;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:600;color:#C0C0C0">
         <span style="font-size:14px">🚨</span>
         SOS
