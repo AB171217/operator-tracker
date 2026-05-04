@@ -96,33 +96,55 @@
     o.stop(startTime + dur);
   }
 
-  function alertSOS(){
-    if(!alertsEnabled) return;
+  // Repeating alert intervals
+  let _sosInterval = null;
+  let _fallInterval = null;
+
+  function _playSOS(){
     const ctx = getCtx();
     const t = ctx.currentTime;
-    // SOS pattern: 3 short + 3 long + 3 short
-    const s = 0.15, l = 0.4, g = 0.12;
-    let x = t + 0.05;
+    const s=0.15, l=0.4, g=0.1;
+    let x = t+0.05;
     [s,s,s].forEach(d=>{beep(1400,x,d,0.8);x+=d+g;});
-    x += 0.2;
+    x+=0.2;
     [l,l,l].forEach(d=>{beep(1000,x,d,0.8);x+=d+g;});
-    x += 0.2;
+    x+=0.2;
     [s,s,s].forEach(d=>{beep(1400,x,d,0.8);x+=d+g;});
+  }
+
+  function _playFall(){
+    const ctx = getCtx();
+    const t = ctx.currentTime;
+    beep(600, t+0.0, 0.15, 0.7);
+    beep(1200,t+0.2, 0.3,  0.7);
+    beep(600, t+0.8, 0.15, 0.7);
+    beep(1200,t+1.0, 0.3,  0.7);
+  }
+
+  function alertSOS(){
+    if(!alertsEnabled) return;
+    if(_sosInterval) return; // כבר מצלצל
+    _playSOS();
+    _sosInterval = setInterval(_playSOS, 5000); // כל 5 שניות
+  }
+
+  function stopSOS(){
+    if(_sosInterval){ clearInterval(_sosInterval); _sosInterval=null; }
   }
 
   function alertFall(){
     if(!alertsEnabled) return;
-    const ctx = getCtx();
-    const t = ctx.currentTime;
-    beep(600,  t+0.0,  0.15, 0.7);
-    beep(1200, t+0.2,  0.3,  0.7);
-    beep(600,  t+0.8,  0.15, 0.7);
-    beep(1200, t+1.0,  0.3,  0.7);
+    if(_fallInterval) return;
+    _playFall();
+    _fallInterval = setInterval(_playFall, 4000); // כל 4 שניות
+  }
+
+  function stopFall(){
+    if(_fallInterval){ clearInterval(_fallInterval); _fallInterval=null; }
   }
 
   function toggleAlerts(){
-    // Unlock audio on first click
-    getCtx();
+    getCtx(); // unlock audio
     alertsEnabled = !alertsEnabled;
     const icon  = document.getElementById('alertIcon');
     const label = document.getElementById('alertLabel');
@@ -131,12 +153,12 @@
       if(icon)  icon.textContent  = '🔔';
       if(label) label.textContent = 'Sound ON';
       if(btn){btn.style.background='#0d1a0d';btn.style.color='#4ade80';btn.style.borderColor='#4ade80';}
-      // Play test beep to confirm
-      beep(880, getCtx().currentTime+0.05, 0.1, 0.4);
+      beep(880, getCtx().currentTime+0.05, 0.1, 0.4); // beep לאישור
     } else {
       if(icon)  icon.textContent  = '🔕';
       if(label) label.textContent = 'Sound OFF';
       if(btn){btn.style.background='#1a1a1a';btn.style.color='#666';btn.style.borderColor='#444';}
+      stopSOS(); stopFall(); // עצור כל צלילים פעילים
     }
   }
 
@@ -556,9 +578,10 @@
 
     document.getElementById('btnClearSOS').addEventListener('click', ()=>{
       state.sos=false;
-      document.getElementById('btnSOS').classList.remove('active');
-      document.getElementById('btnSOS').textContent='SOS';
+      stopSOS();
       document.getElementById('sosAlert').classList.remove('show');
+      const si=document.getElementById('sosIndicator');
+      if(si){si.style.animation='none';si.style.color='#C0C0C0';si.style.borderColor='#E8B4B4';si.style.background='#FFF0F0';si.style.boxShadow='none';}
       set(ref(db,'operator/sos'), false);
       addLog('SOS cleared');
     });
@@ -595,7 +618,7 @@
     const clearSOSEl=document.getElementById('btnClearSOS');
     if(clearSOSEl) clearSOSEl.addEventListener('click', ()=>{
       document.getElementById('sosAlert').classList.remove('show');
-      // Reset SOS indicator
+      stopSOS(); // עצור צליל SOS
       const si=document.getElementById('sosIndicator');
       if(si){si.style.animation='none';si.style.background='#FFF0F0';si.style.borderColor='#E8B4B4';si.style.color='#C0C0C0';si.style.boxShadow='none';}
       state.sos=false;
@@ -605,15 +628,17 @@
     const clearFallEl=document.getElementById('btnClearFall');
     if(clearFallEl) clearFallEl.addEventListener('click', ()=>{
       document.getElementById('fallAlert').classList.remove('show');
-      // Reset Fall indicator
+      stopFall(); // עצור צליל Fall
       const fi=document.getElementById('fallIndicator');
       if(fi){fi.style.animation='none';fi.style.background='#F5F0FF';fi.style.borderColor='#C4AEE8';fi.style.color='#C0C0C0';fi.style.boxShadow='none';}
       set(ref(db,'operator/fall'), {detected:false,time:null});
       addLog('Fall alert cleared by '+state.user);
     });
     document.getElementById('btnClearFall').addEventListener('click', ()=>{
+      stopFall();
       document.getElementById('fallAlert').classList.remove('show');
-      document.getElementById('btnFall').classList.remove('active');
+      const fi=document.getElementById('fallIndicator');
+      if(fi){fi.style.animation='none';fi.style.color='#C0C0C0';fi.style.borderColor='#C4AEE8';fi.style.background='#F5F0FF';fi.style.boxShadow='none';}
       set(ref(db,'operator/fall'), {detected:false,time:null});
       addLog('Fall alert cleared');
     });
