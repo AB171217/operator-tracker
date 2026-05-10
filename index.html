@@ -362,7 +362,13 @@
       }
       if(data.location){
         const loc=data.location;
+        const prev = state.floor ? state.floor.floorName : null;
+        const newName = loc.floorName;
         state.floor={bld:loc.bld, fid:loc.fid, bldName:loc.bldName, floorName:loc.floorName, cls:loc.cls};
+        // הוסף לevent log אם השתנה
+        if(newName && newName !== prev){
+          addLog('📍 Location: <span style="color:#185FA5;font-weight:500">'+newName+'</span>'+(loc.bldName?' ('+loc.bldName+')':''));
+        }
         updateHero(); renderBuildings();
         const devLoc=document.getElementById('devLoc');
         const wi=document.getElementById('wifiIndicator');
@@ -586,11 +592,17 @@
 
     // Reset Map button (Control Room)
     document.getElementById('btnExitCR').addEventListener('click', ()=>{
-      if(!confirm('Reset map and clear all location data?')) return;
+      if(!confirm('Reset map and clear all location data + event log?')) return;
       state.floor=null; state.sos=false; state.pending=null;
       state.log=[]; state.dlog=[];
       document.getElementById('sosAlert').classList.remove('show');
       document.getElementById('fallAlert').classList.remove('show');
+      // איפוס אינדיקטורים
+      const si=document.getElementById('sosIndicator');
+      if(si){si.style.animation='none';si.style.background='#FFF0F0';si.style.borderColor='#E8B4B4';si.style.color='#C0C0C0';si.style.boxShadow='none';}
+      const fi=document.getElementById('fallIndicator');
+      if(fi){fi.style.animation='none';fi.style.background='#F5F0FF';fi.style.borderColor='#C4AEE8';fi.style.color='#C0C0C0';fi.style.boxShadow='none';}
+      stopSOS(); stopFall();
       updateHero(); renderBuildings(); renderDlog(); renderLog();
       set(ref(db,'operator/location'), null);
       set(ref(db,'operator/sos'), false);
