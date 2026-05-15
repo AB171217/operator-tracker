@@ -24,8 +24,7 @@
   const db = getDatabase(app);
 
   const ADMIN_NAME = "Ali Bzadug";
-  const ADMIN_PASS = "AB17pro$";
-  const USER_PASS  = "AB17$";
+  // No passwords needed — StatiCrypt handles site access
 
   const FLOORS = {
     CTR: [{id:'CTR', name:'Control Room', desc:'Surface — router anchor', cls:'ctr', icon:'control'}],
@@ -492,11 +491,10 @@
     });
   }
 
-  function validateCreds(u, p){
-    if(!u) return null;
-    if(u===ADMIN_NAME&&p===ADMIN_PASS) return 'admin';
-    if(p===USER_PASS) return 'user';
-    return null;
+  function isAdminName(u){
+    // Admin auto-detected by name
+    if(!u) return false;
+    return u.trim().toLowerCase() === ADMIN_NAME.toLowerCase();
   }
 
   function enterApp(u, admin){
@@ -513,53 +511,49 @@
 
   function doLogin(){
     const u=document.getElementById('inUser').value.trim();
-    const p=document.getElementById('inPass').value;
     const err=document.getElementById('loginErr');
-    const role=validateCreds(u,p);
-    if(!u){err.textContent='Please enter a username.';err.classList.add('show');return;}
-    if(!role){err.textContent='Incorrect password. Please try again.';err.classList.add('show');return;}
+    if(!u){
+      err.textContent='Please enter your name.';
+      err.classList.add('show');
+      return;
+    }
     err.classList.remove('show');
     localStorage.setItem('ot_session_user', u);
-    localStorage.setItem('ot_session_pass', p);
     const remCreds=document.getElementById('rememberCreds');
     if(remCreds && remCreds.checked){
       localStorage.setItem('ot_saved_user', u);
-      localStorage.setItem('ot_saved_pass', p);
     } else {
       localStorage.removeItem('ot_saved_user');
-      localStorage.removeItem('ot_saved_pass');
     }
-    enterApp(u, role==='admin');
+    enterApp(u, isAdminName(u));
   }
 
   function doLogout(){
-    const vRef=ref(db,'viewers/'+state.user.replace(/\s/g,'_'));
-    update(vRef,{online:false,left:now()});
+    if(state.user){
+      const vRef=ref(db,'viewers/'+state.user.replace(/\s/g,'_'));
+      update(vRef,{online:false,left:now()});
+    }
     state.user=null; state.admin=false; state.floor=null; state.sos=false; state.log=[]; state.dlog=[]; state.pending=null;
     localStorage.removeItem('ot_session_user');
-    localStorage.removeItem('ot_session_pass');
     const savedUser=localStorage.getItem('ot_saved_user');
-    const savedPass=localStorage.getItem('ot_saved_pass');
     document.getElementById('inUser').value=savedUser||'';
-    document.getElementById('inPass').value=savedPass||'';
     const remCreds=document.getElementById('rememberCreds');
-    if(remCreds) remCreds.checked=!!(savedUser&&savedPass);
+    if(remCreds) remCreds.checked=!!savedUser;
     document.getElementById('pgApp').style.display='none';
     document.getElementById('pgLogin').style.display='block';
   }
 
   function tryAutoLogin(){
+    // אם יש שם פעיל מהSession הקודם — היכנס אוטומטית
     const su=localStorage.getItem('ot_session_user');
-    const sp=localStorage.getItem('ot_session_pass');
-    if(su&&sp&&validateCreds(su,sp)){
-      enterApp(su, validateCreds(su,sp)==='admin');
+    if(su){
+      enterApp(su, isAdminName(su));
       return;
     }
+    // אחרת — מילוי שדה השם השמור
     const savedUser=localStorage.getItem('ot_saved_user');
-    const savedPass=localStorage.getItem('ot_saved_pass');
-    if(savedUser&&savedPass){
+    if(savedUser){
       document.getElementById('inUser').value=savedUser;
-      document.getElementById('inPass').value=savedPass;
       const remCreds=document.getElementById('rememberCreds');
       if(remCreds) remCreds.checked=true;
     }
@@ -569,8 +563,12 @@
     renderDlog();
 
     document.getElementById('btnLogin').addEventListener('click', doLogin);
-    document.getElementById('inPass').addEventListener('keydown', e=>{if(e.key==='Enter')doLogin();});
+    document.getElementById('inUser').addEventListener('keypress', e=>{
+      if(e.key==='Enter') doLogin();
+    });
     document.getElementById('btnSignout').addEventListener('click', doLogout);
+    // נסה אוטו-לוגין או למלא שם שמור
+    tryAutoLogin();
 
 
 
@@ -845,14 +843,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <div class="ll-sub">KKH Pumped Storage</div>
       </div>
     </div>
-    <div class="fg"><label class="fl">Username</label><input class="fi" id="inUser" type="text" placeholder="Enter your name" autocomplete="off"/></div>
-    <div class="fg"><label class="fl">Password</label><input class="fi" id="inPass" type="password" placeholder="Enter password" autocomplete="off"/></div>
-    <button class="lbtn" id="btnLogin">Sign in</button>
+    <div class="fg"><label class="fl">What's your name?</label><input class="fi" id="inUser" type="text" placeholder="e.g. John Smith" autocomplete="off"/></div>
+    <button class="lbtn" id="btnLogin">Enter</button>
     <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
-      <input type="checkbox" id="rememberCreds" style="width:14px;height:14px;cursor:pointer"/>
-      <label for="rememberCreds" style="font-size:12px;color:#888;cursor:pointer">Remember my username and password on this device</label>
+      <input type="checkbox" id="rememberCreds" style="width:14px;height:14px;cursor:pointer" checked/>
+      <label for="rememberCreds" style="font-size:12px;color:#888;cursor:pointer">Remember my name on this device</label>
     </div>
-    <div class="lerr" id="loginErr">Incorrect password. Please try again.</div>
+    <div class="lerr" id="loginErr">Please enter your name.</div>
     <div class="firebase-badge" style="margin-top:12px">
       <svg viewBox="0 0 24 24" fill="#F57C00"><path d="M5.85 12.21L3.29 20l7.64-4.35L5.85 12.21zM20.71 20L13.07 3.5l-1.5 5.57 4.5 7.79L20.71 20zM12.14 9.86L10.71 4.5 3.29 20l8.85-10.14z"/></svg>
       Connected to Firebase — live data
